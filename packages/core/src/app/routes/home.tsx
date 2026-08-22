@@ -507,8 +507,9 @@ function SlideCard({
     <>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag source wraps an interactive Link */}
       <div
-        draggable
+        draggable={import.meta.env.DEV}
         onDragStart={(e) => {
+          if (!import.meta.env.DEV) return;
           e.dataTransfer.setData(SLIDE_DND_MIME, id);
           e.dataTransfer.effectAllowed = 'move';
           const chip = createDragChip(displayTitle);
