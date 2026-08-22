@@ -13,6 +13,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
+  deployedStudioUrl,
+  publishHostedDraft,
+  waitForHostedDeployment,
+} from '@/lib/hosted-deployment';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -72,28 +77,14 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
         commitSha?: string;
       };
       if (!response.ok) throw new Error(created.error ?? `Create failed with ${response.status}`);
-      const publishedResponse = await fetch(publishConfig.publishEndpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ expectedDraftHead: created.commitSha }),
-      });
-      const published = (await publishedResponse.json().catch(() => ({}))) as { error?: string };
-      if (!publishedResponse.ok) {
-        throw new Error(published.error ?? `Publish failed with ${publishedResponse.status}`);
-      }
-      toast.success('Deck created. Waiting for deployment.');
-      const deadline = Date.now() + 5 * 60_000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const statusResponse = await fetch(publishConfig.statusEndpoint, { cache: 'no-store' });
-        if (!statusResponse.ok) continue;
-        const status = (await statusResponse.json()) as { deployedSha?: string; mainSha?: string };
-        if (status.deployedSha && status.deployedSha === status.mainSha) {
-          window.location.assign(`/s/${encodeURIComponent(deckId)}`);
-          return;
-        }
-      }
-      throw new Error('The deck was published, but the deployment did not finish in time');
+      if (!created.commitSha) throw new Error('Create response did not include a commit');
+      const targetSha = await publishHostedDraft(publishConfig, created.commitSha);
+      toast.success('Deck created. Deploying now.');
+      setCreating(false);
+      onClose();
+      await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
+      const url = deployedStudioUrl(`/s/${encodeURIComponent(deckId)}`, targetSha);
+      window.location.assign(url.toString());
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
       setCreating(false);
@@ -101,7 +92,7 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && !creating && onClose()}>
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New deck</DialogTitle>
@@ -161,8 +152,8 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" disabled={creating} onClick={onClose}>
-            Cancel
+          <Button variant="ghost" onClick={onClose}>
+            {creating ? 'Close' : 'Cancel'}
           </Button>
           <Button
             variant="brand"

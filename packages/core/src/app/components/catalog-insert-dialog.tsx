@@ -4,6 +4,11 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
+  deployedStudioUrl,
+  publishHostedDraft,
+  waitForHostedDeployment,
+} from '@/lib/hosted-deployment';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -55,18 +60,6 @@ export function CatalogInsertDialog({
 
   if (!catalogConfig || !publishConfig) return null;
 
-  const waitForDeployment = async () => {
-    const deadline = Date.now() + 5 * 60_000;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      const response = await fetch(publishConfig.statusEndpoint, { cache: 'no-store' });
-      if (!response.ok) continue;
-      const state = (await response.json()) as { deployedSha?: string; mainSha?: string };
-      if (state.deployedSha && state.deployedSha === state.mainSha) return;
-    }
-    throw new Error('The slide was published, but the deployment did not finish in time');
-  };
-
   const insert = async () => {
     if (index === null || !selectedId || preparing) return;
     setPreparing(true);
@@ -83,20 +76,15 @@ export function CatalogInsertDialog({
       if (!insertResponse.ok) {
         throw new Error(inserted.error ?? `Insert failed with ${insertResponse.status}`);
       }
-      const publishResponse = await fetch(publishConfig.publishEndpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ expectedDraftHead: inserted.commitSha }),
-      });
-      const published = (await publishResponse.json().catch(() => ({}))) as { error?: string };
-      if (!publishResponse.ok) {
-        throw new Error(published.error ?? `Publish failed with ${publishResponse.status}`);
-      }
-      toast.success('Slide inserted. Waiting for deployment.');
-      await waitForDeployment();
+      if (!inserted.commitSha) throw new Error('Insert response did not include a commit');
+      const targetSha = await publishHostedDraft(publishConfig, inserted.commitSha);
+      toast.success('Slide inserted. Deploying now.');
+      setPreparing(false);
+      onClose();
+      await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
       const url = new URL(window.location.href);
       url.searchParams.set('p', String(index + 1));
-      window.location.assign(url);
+      window.location.assign(deployedStudioUrl(url, targetSha));
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
       setPreparing(false);
@@ -104,8 +92,8 @@ export function CatalogInsertDialog({
   };
 
   return (
-    <Dialog open={index !== null} onOpenChange={(open) => !open && !preparing && onClose()}>
-      <DialogContent className="max-w-3xl">
+    <Dialog open={index !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Insert a slide</DialogTitle>
           <DialogDescription>Choose a Turn.One layout for this exact position.</DialogDescription>
@@ -144,8 +132,8 @@ export function CatalogInsertDialog({
           </div>
         )}
         <DialogFooter>
-          <Button variant="ghost" disabled={preparing} onClick={onClose}>
-            Cancel
+          <Button variant="ghost" onClick={onClose}>
+            {preparing ? 'Close' : 'Cancel'}
           </Button>
           <Button
             variant="brand"
