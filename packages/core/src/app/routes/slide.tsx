@@ -311,7 +311,7 @@ export function Slide() {
       } else if (e.key === 'p' || e.key === 'P') {
         if (slideId) openPresenterWindow(slideId);
         setPlayMode('window');
-      } else if (authoringEnabled && (e.key === 'd' || e.key === 'D')) {
+      } else if (import.meta.env.DEV && (e.key === 'd' || e.key === 'D')) {
         setDesignOpen((v) => !v);
       }
     };
@@ -725,7 +725,7 @@ export function Slide() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {view === 'slides' && (
+              {view === 'slides' && import.meta.env.DEV && (
                 <DesignToggleButton active={designOpen} onToggle={() => setDesignOpen((v) => !v)} />
               )}
               {view === 'slides' && <InspectToggleButton />}

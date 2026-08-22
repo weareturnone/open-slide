@@ -26,7 +26,7 @@ export function useDesign(slideId: string): UseDesignReturn {
 
   const refresh = useCallback(async () => {
     const id = slideIdRef.current;
-    if (!id) return;
+    if (!id || !import.meta.env.DEV) return;
     try {
       const res = await fetch(`/__design?slideId=${encodeURIComponent(id)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

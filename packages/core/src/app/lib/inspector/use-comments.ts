@@ -15,7 +15,7 @@ export function useComments(slideId: string) {
   const [error, setError] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    if (!slideId) return;
+    if (!slideId || !import.meta.env.DEV) return;
     try {
       const res = await fetch(`/__comments?slideId=${encodeURIComponent(slideId)}`);
       if (!res.ok) {
@@ -32,6 +32,7 @@ export function useComments(slideId: string) {
 
   const add = useCallback(
     async (line: number, column: number, text: string) => {
+      if (!import.meta.env.DEV) throw new Error('Comments are available only in local development');
       const res = await fetch('/__comments/add', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -48,6 +49,7 @@ export function useComments(slideId: string) {
 
   const remove = useCallback(
     async (id: string) => {
+      if (!import.meta.env.DEV) throw new Error('Comments are available only in local development');
       const res = await fetch(`/__comments/${id}?slideId=${encodeURIComponent(slideId)}`, {
         method: 'DELETE',
       });
