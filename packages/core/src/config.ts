@@ -21,6 +21,9 @@ export type OpenSlideAuthoringConfig = {
     listEndpoint: string;
     insertEndpoint: string;
   };
+  decks?: {
+    createEndpoint: string;
+  };
 };
 
 export type OpenSlideConfig = {

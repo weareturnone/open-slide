@@ -25,6 +25,9 @@ declare module 'virtual:open-slide/config' {
         listEndpoint: string;
         insertEndpoint: string;
       };
+      decks?: {
+        createEndpoint: string;
+      };
     };
     build: {
       showSlideBrowser: boolean;

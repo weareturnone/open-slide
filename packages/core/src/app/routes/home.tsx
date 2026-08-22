@@ -1,3 +1,4 @@
+import config from 'virtual:open-slide/config';
 import {
   ArrowDownAZ,
   ChevronDown,
@@ -8,6 +9,7 @@ import {
   MoreHorizontal,
   Palette,
   Pencil,
+  Plus,
   Search,
   Trash2,
   X,
@@ -15,6 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { toast } from 'sonner';
+import { NewDeckDialog } from '@/components/new-deck-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -85,6 +88,7 @@ export function Home() {
     deleteSlide,
   } = useOutletContext<HomeOutletContext>();
   const t = useLocale();
+  const [newDeckOpen, setNewDeckOpen] = useState(false);
 
   const isAll = selectedId === ALL_SLIDES_ID;
   const isDraft = selectedId === DRAFT_ID;
@@ -199,6 +203,12 @@ export function Home() {
             </span>
           )}
           <div className="ml-auto flex w-full items-center gap-2 md:w-auto">
+            {config.authoring?.decks && (
+              <Button size="sm" variant="brand" onClick={() => setNewDeckOpen(true)}>
+                <Plus className="size-3.5" />
+                New deck
+              </Button>
+            )}
             <SortControl value={sortKey} onChange={setSortKey} />
             <SearchInput value={query} onChange={setQuery} />
           </div>
@@ -242,6 +252,7 @@ export function Home() {
           ))}
         </ul>
       )}
+      <NewDeckDialog open={newDeckOpen} onClose={() => setNewDeckOpen(false)} />
     </>
   );
 }
