@@ -6,6 +6,8 @@ import {
   duplicateNotesElementInSource,
   duplicatePageInDefaultExportInSource,
   duplicateSlideDir,
+  insertNotesElementInSource,
+  insertPageComponentInSource,
   removeNotesElementInSource,
   removePageFromDefaultExportInSource,
   reorderDefaultExportPagesInSource,
@@ -412,6 +414,51 @@ export default [
 
   it('returns null when the default export is not an array', () => {
     expect(duplicatePageInDefaultExportInSource(`export default A;\n`, 0)).toBeNull();
+  });
+});
+
+describe('insertPageComponentInSource', () => {
+  const source = [
+    "import type { Page, SlideMeta } from '@open-slide/core';",
+    '',
+    'const Cover: Page = () => <main><h1>Cover</h1></main>;',
+    'const Closing: Page = () => <main><h1>Closing</h1></main>;',
+    '',
+    "export const meta: SlideMeta = { title: 'Deck' };",
+    '',
+    'export default [',
+    '  Cover,',
+    '  Closing,',
+    '];',
+    '',
+  ].join('\n');
+
+  it('inserts a trusted component and page identifier at the exact boundary', () => {
+    const component = 'const StudioPoint: Page = () => <main><h2>Point</h2></main>;';
+    const result = insertPageComponentInSource(source, 'StudioPoint', component, 1);
+    expect(result).not.toBeNull();
+    expect(result).toContain(component);
+    expect(result).toMatch(/export default \[\s*Cover,\s*StudioPoint,\s*Closing,/);
+  });
+
+  it('rejects executable template modules and duplicate component names', () => {
+    expect(
+      insertPageComponentInSource(
+        source,
+        'StudioPoint',
+        "import x from 'x'; const StudioPoint = () => <main />;",
+        1,
+      ),
+    ).toBeNull();
+    expect(
+      insertPageComponentInSource(source, 'Cover', 'const Cover = () => <main />;', 1),
+    ).toBeNull();
+  });
+
+  it('keeps notes aligned when a page is inserted', () => {
+    const withNotes = `${source}export const notes = ['cover', 'closing'];\n`;
+    const result = insertNotesElementInSource(withNotes, 1);
+    expect(result).toContain("'cover',\n  undefined,\n  'closing',");
   });
 });
 

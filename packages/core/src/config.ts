@@ -17,6 +17,10 @@ export type OpenSlideAuthoringConfig = {
     statusEndpoint: string;
     publishEndpoint: string;
   };
+  catalog?: {
+    listEndpoint: string;
+    insertEndpoint: string;
+  };
 };
 
 export type OpenSlideConfig = {

@@ -22,10 +22,11 @@ import {
   Grid2x2,
   ListOrdered,
   type LucideIcon,
+  Plus,
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -71,6 +72,7 @@ type Props = {
   moduleTransition?: SlideTransition;
   /** When provided, the vertical rail header renders a button that opens the overview grid. */
   onOverview?: () => void;
+  onInsert?: (index: number) => void;
 };
 
 const DEFAULT_VERTICAL_THUMB_WIDTH = 184;
@@ -97,6 +99,7 @@ export function ThumbnailRail({
   width,
   moduleTransition,
   onOverview,
+  onInsert,
 }: Props) {
   const activeRef = useRef<HTMLButtonElement | null>(null);
   const virtualListRef = useRef<HTMLDivElement | null>(null);
@@ -211,12 +214,8 @@ export function ThumbnailRail({
         </button>
       );
 
-      if (!actions) {
-        return <Fragment key={i}>{node}</Fragment>;
-      }
-      return (
+      const thumb = actions ? (
         <ThumbContextMenu
-          key={i}
           index={i}
           actions={actions}
           pageCount={pages.length}
@@ -224,6 +223,23 @@ export function ThumbnailRail({
         >
           {node}
         </ThumbContextMenu>
+      ) : (
+        node
+      );
+      return (
+        <div key={i} className="group/boundary relative">
+          {thumb}
+          {onInsert && i < pages.length - 1 && (
+            <button
+              type="button"
+              onClick={() => onInsert(i + 1)}
+              aria-label={`Insert slide after page ${i + 1}`}
+              className="absolute -bottom-2 left-1/2 z-10 grid size-5 -translate-x-1/2 place-items-center rounded-full border border-hairline bg-card text-muted-foreground opacity-55 shadow-sm transition hover:border-brand hover:text-brand hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+            >
+              <Plus className="size-3" />
+            </button>
+          )}
+        </div>
       );
     },
     [
@@ -233,6 +249,7 @@ export function ThumbnailRail({
       height,
       moduleTransition,
       onReorder,
+      onInsert,
       onSelect,
       pages.length,
       scale,

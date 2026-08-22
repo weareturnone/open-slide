@@ -21,6 +21,10 @@ declare module 'virtual:open-slide/config' {
         statusEndpoint: string;
         publishEndpoint: string;
       };
+      catalog?: {
+        listEndpoint: string;
+        insertEndpoint: string;
+      };
     };
     build: {
       showSlideBrowser: boolean;

@@ -20,6 +20,7 @@ import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AssetView } from '@/components/asset-view';
+import { CatalogInsertDialog } from '@/components/catalog-insert-dialog';
 import { HistoryProvider } from '@/components/history-provider';
 import { HostedPublishButton } from '@/components/hosted-publish-button';
 import { CommentWidget } from '@/components/inspector/comment-widget';
@@ -61,10 +62,10 @@ import { SlideCanvas } from '../components/slide-canvas';
 import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/slide-preload-layer';
 import { SlideTransitionLayer } from '../components/slide-transition-layer';
 import { type ThumbnailActions, ThumbnailRail } from '../components/thumbnail-rail';
+import { authoringEnabled } from '../lib/authoring';
 import { exportSlideAsHtml } from '../lib/export-html';
 import { exportSlideAsPdf, isSafari } from '../lib/export-pdf';
 import { exportSlideAsImagePptx } from '../lib/export-pptx';
-import { authoringEnabled } from '../lib/authoring';
 import { remapNotesSessionCacheAfterReorder } from '../lib/inspector/use-notes';
 import type { SlideModule } from '../lib/sdk';
 import { usePrefersReducedMotion } from '../lib/use-prefers-reduced-motion';
@@ -96,6 +97,7 @@ export function Slide() {
   const [designOpen, setDesignOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [catalogInsertIndex, setCatalogInsertIndex] = useState<number | null>(null);
   const [, setWarmedTick] = useState(0);
   const handleAssetsWarmed = useCallback(() => {
     markDeckWarmed(slideId);
@@ -799,6 +801,7 @@ export function Slide() {
                     actions={thumbnailActions}
                     moduleTransition={slide.transition}
                     onOverview={() => setOverviewOpen(true)}
+                    onInsert={config.authoring?.catalog ? setCatalogInsertIndex : undefined}
                   />
                   <main
                     ref={slideViewportRef}
@@ -862,6 +865,11 @@ export function Slide() {
                   variant="editor"
                   moduleTransition={slide.transition}
                 />
+                <CatalogInsertDialog
+                  slideId={slideId}
+                  index={catalogInsertIndex}
+                  onClose={() => setCatalogInsertIndex(null)}
+                />
               </div>
             </DesignProvider>
           )}
@@ -918,6 +926,7 @@ function ResizableRail(props: {
   actions?: ThumbnailActions;
   moduleTransition?: SlideModule['transition'];
   onOverview?: () => void;
+  onInsert?: (index: number) => void;
 }) {
   const t = useLocale();
   const [width, setWidth] = useState<number>(readStoredRailWidth);
