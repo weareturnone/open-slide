@@ -3,6 +3,7 @@ import { CloudUpload, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { AUTHORING_CHANGED_EVENT } from '@/lib/authoring';
 
 type VersionState = {
   draftSha: string;
@@ -29,7 +30,12 @@ export function HostedPublishButton() {
 
   useEffect(() => {
     refresh().catch(() => {});
+    const onAuthoringChanged = () => {
+      refresh().catch(() => {});
+    };
+    window.addEventListener(AUTHORING_CHANGED_EVENT, onAuthoringChanged);
     return () => {
+      window.removeEventListener(AUTHORING_CHANGED_EVENT, onAuthoringChanged);
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
   }, [refresh]);

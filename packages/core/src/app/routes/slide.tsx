@@ -62,7 +62,7 @@ import { SlideCanvas } from '../components/slide-canvas';
 import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/slide-preload-layer';
 import { SlideTransitionLayer } from '../components/slide-transition-layer';
 import { type ThumbnailActions, ThumbnailRail } from '../components/thumbnail-rail';
-import { authoringEnabled } from '../lib/authoring';
+import { authoringEnabled, notifyAuthoringChanged } from '../lib/authoring';
 import { exportSlideAsHtml } from '../lib/export-html';
 import { exportSlideAsPdf, isSafari } from '../lib/export-pdf';
 import { exportSlideAsImagePptx } from '../lib/export-pptx';
@@ -191,6 +191,7 @@ export function Slide() {
           const detail = await res.json().catch(() => ({ error: res.statusText }));
           throw new Error(detail.error ?? `HTTP ${res.status}`);
         }
+        notifyAuthoringChanged();
       } catch (err) {
         setPages(before);
         const inverse = order.map((_, i) => order.indexOf(i));
@@ -218,6 +219,7 @@ export function Slide() {
           const detail = await res.json().catch(() => ({ error: res.statusText }));
           throw new Error(detail.error ?? `HTTP ${res.status}`);
         }
+        notifyAuthoringChanged();
         toast.success(format(t.thumbnailRail.toastDuplicated, { n: i + 1 }));
       } catch (err) {
         setPages(before);
@@ -248,6 +250,7 @@ export function Slide() {
           const detail = await res.json().catch(() => ({ error: res.statusText }));
           throw new Error(detail.error ?? `HTTP ${res.status}`);
         }
+        notifyAuthoringChanged();
         toast.success(format(t.thumbnailRail.toastDeleted, { n: i + 1 }));
       } catch (err) {
         setPages(before);

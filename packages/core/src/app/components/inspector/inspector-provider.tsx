@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner';
 import { useHistory } from '@/components/history-provider';
 import { Button } from '@/components/ui/button';
+import { authoringEnabled, notifyAuthoringChanged } from '@/lib/authoring';
 import { type SlideComment, useComments } from '@/lib/inspector/use-comments';
 import { type Edit, type EditOp, type EditResult, useEditor } from '@/lib/inspector/use-editor';
 import { useLocale } from '@/lib/use-locale';
@@ -749,6 +750,9 @@ export function InspectorProvider({
     setCommitting(true);
     try {
       const results = await applyEdits(pending.map((p) => p.edit));
+      if (results.some((result) => result.ok)) {
+        notifyAuthoringChanged();
+      }
       const failures: string[] = [];
       for (let i = 0; i < results.length; i++) {
         const item = pending[i];
@@ -938,7 +942,7 @@ export function InspectorProvider({
   }, []);
 
   useEffect(() => {
-    if (import.meta.env.PROD) return;
+    if (!authoringEnabled) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLElement && e.target.matches('input, textarea')) return;
       if (e.key !== 'i' && e.key !== 'I') return;
@@ -1151,7 +1155,7 @@ function parsePercent(s: string, fallback: number): number {
 export function InspectToggleButton() {
   const t = useLocale();
   const { active, toggle } = useInspector();
-  if (import.meta.env.PROD) return null;
+  if (!authoringEnabled) return null;
   return (
     <Button
       size="sm"

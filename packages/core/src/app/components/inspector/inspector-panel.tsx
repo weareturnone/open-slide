@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { Field, NumberField, Section } from '@/components/panel/panel-fields';
 import { PANEL_TRANSITION_MS, PanelShell, useAnimatedOpen } from '@/components/panel/panel-shell';
 import { Button } from '@/components/ui/button';
+import { notifyAuthoringChanged } from '@/lib/authoring';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -87,6 +88,7 @@ export function InspectorPanel() {
     const target = resolveSelectedTarget(selected, slideId);
     try {
       await applyEdit(target.line, target.column, [{ kind: 'delete-element' }]);
+      notifyAuthoringChanged();
       if (target.anchor.isConnected) target.anchor.remove();
       setSelected(null);
       toast.success('Element deleted');
