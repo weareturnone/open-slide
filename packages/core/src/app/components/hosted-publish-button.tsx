@@ -13,6 +13,7 @@ type VersionState = {
 };
 
 const publishConfig = config.authoring?.publish;
+const DEPLOYMENT_SETTLE_MS = 5_000;
 
 export function HostedPublishButton() {
   const [version, setVersion] = useState<VersionState | null>(null);
@@ -49,7 +50,11 @@ export function HostedPublishButton() {
         if (next?.deployedSha && next.deployedSha === next.mainSha) {
           setPublishing(false);
           toast.success('Published and deployed');
-          window.location.reload();
+          const deployedUrl = new URL(window.location.href);
+          deployedUrl.searchParams.set('studioVersion', next.mainSha.slice(0, 12));
+          pollTimer.current = setTimeout(() => {
+            window.location.replace(deployedUrl.toString());
+          }, DEPLOYMENT_SETTLE_MS);
           return;
         }
       } catch {
