@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEdit, safeAssetIdentifier } from './edit-ops.ts';
+import { applyEdit, applyEditBatch, safeAssetIdentifier } from './edit-ops.ts';
 
 describe('applyEdit / set-style', () => {
   // Every JSX opening tag in these synthetic sources sits at column 0;
@@ -152,6 +152,71 @@ describe('applyEdit / set-style', () => {
     const r = applyEdit(src, 2, 0, [{ kind: 'set-style', key: 'fontFamily', value: "Pacifico's" }]);
     if (!r.ok) throw new Error(`expected ok, got ${r.error}`);
     expect(r.source).toContain("fontFamily: 'Pacifico\\'s'");
+  });
+});
+
+describe('applyEdit / delete-element', () => {
+  it('deletes a directly authored JSX child', () => {
+    const src = [
+      'export default [() => (',
+      '<div>',
+      '  <svg><line x1="0" x2="10" /></svg>',
+      '  <img src="hero.png" />',
+      '</div>',
+      ')];',
+      '',
+    ].join('\n');
+    const result = applyEdit(src, 4, 2, [{ kind: 'delete-element' }]);
+    if (!result.ok) throw new Error(`expected ok, got ${result.error}`);
+    expect(result.source).not.toContain('<img');
+    expect(result.source).toContain('<line');
+  });
+
+  it('refuses to delete the root page element', () => {
+    const src = ['export default [() => (', '<div>Keep a root</div>', ')];', ''].join('\n');
+    const result = applyEdit(src, 2, 0, [{ kind: 'delete-element' }]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/directly authored child/);
+  });
+});
+
+describe('applyEditBatch', () => {
+  it('applies bottom-up edits as one source transaction', () => {
+    const src = [
+      'export default [() => (',
+      '<div>',
+      '  <h1>Old title</h1>',
+      '  <p>Old body</p>',
+      '</div>',
+      ')];',
+      '',
+    ].join('\n');
+    const result = applyEditBatch(src, [
+      { line: 3, column: 2, ops: [{ kind: 'set-text', value: 'New title' }] },
+      { line: 4, column: 2, ops: [{ kind: 'set-text', value: 'New body' }] },
+    ]);
+    if (!result.ok) throw new Error(`expected ok, got ${result.error}`);
+    expect(result.source).toContain('<h1>New title</h1>');
+    expect(result.source).toContain('<p>New body</p>');
+  });
+
+  it('returns the failing index without exposing a partial source', () => {
+    const src = [
+      'export default [() => (',
+      '<div>',
+      '  <h1>Old title</h1>',
+      '</div>',
+      ')];',
+      '',
+    ].join('\n');
+    const result = applyEditBatch(src, [
+      { line: 3, column: 2, ops: [{ kind: 'set-text', value: 'New title' }] },
+      { line: 99, column: 0, ops: [{ kind: 'set-text', value: 'Missing' }] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.editIndex).toBe(1);
   });
 });
 

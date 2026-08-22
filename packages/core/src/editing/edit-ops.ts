@@ -13,11 +13,18 @@ export type EditOp =
       prevText?: string;
     }
   | { kind: 'set-attr-asset'; attr: string; assetPath: string }
-  | { kind: 'replace-placeholder-with-image'; assetPath: string };
+  | { kind: 'replace-placeholder-with-image'; assetPath: string }
+  | { kind: 'delete-element' };
+
+export type SourceEdit = { line: number; column: number; ops: EditOp[] };
 
 export type ApplyEditResult =
   | { ok: true; source: string }
   | { ok: false; status: number; error: string };
+
+export type ApplyEditBatchResult =
+  | { ok: true; source: string }
+  | { ok: false; status: number; error: string; editIndex: number };
 
 export type Splice = { from: number; to: number; text: string };
 
@@ -1175,6 +1182,33 @@ export function applyEdit(
   const element = findElementForEdit(ast, line, column, ops);
   if (!element) return { ok: false, status: 422, error: 'no JSX element at location' };
 
+  const deleteOps = ops.filter((op) => op.kind === 'delete-element');
+  if (deleteOps.length > 0) {
+    if (ops.length !== 1) {
+      return { ok: false, status: 422, error: 'delete-element must be the only operation' };
+    }
+    let directJsxParent = false;
+    walkJsx(ast, (node) => {
+      if (!t.isJSXElement(node) && !t.isJSXFragment(node)) return;
+      if (node.children.includes(element)) {
+        directJsxParent = true;
+        return 'stop';
+      }
+    });
+    if (!directJsxParent) {
+      return {
+        ok: false,
+        status: 422,
+        error: 'only directly authored child elements can be deleted safely',
+      };
+    }
+    const next = source.slice(0, element.start ?? 0) + source.slice(element.end ?? 0);
+    if (!parseSource(next)) {
+      return { ok: false, status: 422, error: 'delete would produce invalid source' };
+    }
+    return { ok: true, source: next };
+  }
+
   const splices: Splice[] = [];
 
   const styleOps = ops.flatMap((op) =>
@@ -1262,6 +1296,24 @@ export function applyEdit(
   }
   if (!parseSource(next)) {
     return { ok: false, status: 422, error: 'edit would produce invalid source' };
+  }
+  return { ok: true, source: next };
+}
+
+/**
+ * Apply a batch as one source transaction. Edits run from the bottom of the
+ * file upward so earlier splices cannot invalidate later source locators. Any
+ * failure returns the original source to the caller.
+ */
+export function applyEditBatch(source: string, edits: SourceEdit[]): ApplyEditBatchResult {
+  const ordered = edits
+    .map((edit, editIndex) => ({ edit, editIndex }))
+    .sort((a, b) => b.edit.line - a.edit.line || b.edit.column - a.edit.column);
+  let next = source;
+  for (const { edit, editIndex } of ordered) {
+    const result = applyEdit(next, edit.line, edit.column, edit.ops);
+    if (!result.ok) return { ...result, editIndex };
+    next = result.source;
   }
   return { ok: true, source: next };
 }

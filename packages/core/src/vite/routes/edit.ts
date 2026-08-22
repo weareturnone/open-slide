@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import type { ViteDevServer } from 'vite';
-import { applyEdit, type EditOp } from '../../editing/edit-ops.ts';
+import { applyEdit, applyEditBatch, type EditOp } from '../../editing/edit-ops.ts';
 import { applyRevertAsset } from '../../editing/revert-asset.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
 import { type ApiContext, json, readBody, resolveSlideEntryPath } from './context.ts';
@@ -80,8 +80,8 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
       }
 
       // One read-modify-write per batch so a multi-element edit session
-      // lands as a single HMR. Per-edit failures are reported but don't
-      // abort the batch.
+      // lands as a single HMR. The batch is atomic: one invalid edit aborts
+      // the write so callers never get a partially applied source file.
       if (url.pathname === '/batch') {
         const body = (await readBody(req)) as EditBatchBody;
         const slideId = body.slideId ?? '';
@@ -96,24 +96,28 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
           return json(res, 404, { error: 'slide not found' });
         }
 
-        const original = source;
-        const results: Array<{ ok: boolean; error?: string }> = [];
-        for (const edit of body.edits) {
-          if (!edit.line || edit.line < 1 || !Array.isArray(edit.ops)) {
-            results.push({ ok: false, error: 'invalid edit' });
-            continue;
-          }
-          const r = applyEdit(source, edit.line, edit.column ?? 0, edit.ops);
-          if (r.ok) {
-            source = r.source;
-            results.push({ ok: true });
-          } else {
-            results.push({ ok: false, error: r.error });
-          }
+        const edits = body.edits.map((edit) => ({
+          line: edit.line ?? 0,
+          column: edit.column ?? 0,
+          ops: edit.ops ?? [],
+        }));
+        if (edits.some((edit) => edit.line < 1 || !Array.isArray(edit.ops))) {
+          return json(res, 400, { error: 'invalid edit' });
         }
-        const changed = source !== original;
-        if (changed) await fs.writeFile(file, source, 'utf8');
-        return json(res, 200, { ok: true, changed, results });
+        const result = applyEditBatch(source, edits);
+        if (!result.ok) {
+          return json(res, result.status, {
+            error: result.error,
+            editIndex: result.editIndex,
+          });
+        }
+        const changed = result.source !== source;
+        if (changed) await fs.writeFile(file, result.source, 'utf8');
+        return json(res, 200, {
+          ok: true,
+          changed,
+          results: edits.map(() => ({ ok: true })),
+        });
       }
 
       return next();

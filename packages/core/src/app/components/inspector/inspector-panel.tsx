@@ -8,9 +8,11 @@ import {
   Crosshair,
   ImageIcon,
   Italic,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Field, NumberField, Section } from '@/components/panel/panel-fields';
 import { PANEL_TRANSITION_MS, PanelShell, useAnimatedOpen } from '@/components/panel/panel-shell';
 import { Button } from '@/components/ui/button';
@@ -79,6 +81,19 @@ export function InspectorPanel() {
   const [rangeStylePreview, setRangeStylePreview] = useState<RangeStylePreview | null>(null);
   const reloadCounter = useReloadCounter();
   const t = useLocale();
+
+  const deleteSelected = useCallback(async () => {
+    if (!selected) return;
+    const target = resolveSelectedTarget(selected, slideId);
+    try {
+      await applyEdit(target.line, target.column, [{ kind: 'delete-element' }]);
+      if (target.anchor.isConnected) target.anchor.remove();
+      setSelected(null);
+      toast.success('Element deleted');
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+    }
+  }, [applyEdit, selected, setSelected, slideId]);
 
   useEffect(() => {
     void selected;
@@ -248,7 +263,17 @@ export function InspectorPanel() {
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <AgentWatchingBadge />
+            {import.meta.env.DEV && <AgentWatchingBadge />}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => void deleteSelected()}
+              aria-label="Delete element"
+              title="Delete element"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -261,7 +286,9 @@ export function InspectorPanel() {
           </div>
         </>
       }
-      footer={<CommentsSection selected={pinSelected} onAdd={add} />}
+      footer={
+        import.meta.env.DEV ? <CommentsSection selected={pinSelected} onAdd={add} /> : undefined
+      }
     >
       {pinSnapshot.text !== null && (
         <>

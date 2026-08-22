@@ -63,6 +63,7 @@ import { type ThumbnailActions, ThumbnailRail } from '../components/thumbnail-ra
 import { exportSlideAsHtml } from '../lib/export-html';
 import { exportSlideAsPdf, isSafari } from '../lib/export-pdf';
 import { exportSlideAsImagePptx } from '../lib/export-pptx';
+import { authoringEnabled } from '../lib/authoring';
 import { remapNotesSessionCacheAfterReorder } from '../lib/inspector/use-notes';
 import type { SlideModule } from '../lib/sdk';
 import { usePrefersReducedMotion } from '../lib/use-prefers-reduced-motion';
@@ -257,7 +258,7 @@ export function Slide() {
 
   const thumbnailActions = useMemo<ThumbnailActions | undefined>(
     () =>
-      import.meta.env.DEV
+      authoringEnabled
         ? {
             onDuplicate: duplicatePage,
             onDelete: deletePage,
@@ -307,7 +308,7 @@ export function Slide() {
       } else if (e.key === 'p' || e.key === 'P') {
         if (slideId) openPresenterWindow(slideId);
         setPlayMode('window');
-      } else if (import.meta.env.DEV && (e.key === 'd' || e.key === 'D')) {
+      } else if (authoringEnabled && (e.key === 'd' || e.key === 'D')) {
         setDesignOpen((v) => !v);
       }
     };
@@ -604,7 +605,7 @@ export function Slide() {
                 </Link>
               )}
               <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-hairline md:block" />
-              {import.meta.env.DEV && (
+              {authoringEnabled && (
                 <Tabs
                   value={view}
                   onValueChange={(next) => {
@@ -792,7 +793,7 @@ export function Slide() {
                     design={slide.design}
                     current={index}
                     onSelect={goTo}
-                    onReorder={import.meta.env.DEV ? reorderPage : undefined}
+                    onReorder={authoringEnabled ? reorderPage : undefined}
                     actions={thumbnailActions}
                     moduleTransition={slide.transition}
                     onOverview={() => setOverviewOpen(true)}
@@ -1198,7 +1199,7 @@ function InlineTitleEditor({
     );
   }
 
-  if (!import.meta.env.DEV) {
+  if (!authoringEnabled) {
     return (
       <div className="flex min-w-0 items-baseline justify-center">
         <h1 className="truncate font-heading text-[13.5px] font-semibold tracking-[-0.01em]">

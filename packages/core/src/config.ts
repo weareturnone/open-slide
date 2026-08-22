@@ -6,6 +6,15 @@ export type OpenSlideBuildConfig = {
   allowHtmlDownload?: boolean;
 };
 
+export type OpenSlideAuthoringConfig = {
+  /**
+   * Expose source-backed authoring controls in production builds. The host
+   * application must provide the existing /__edit, /__slides and /__assets
+   * HTTP contracts when this is enabled.
+   */
+  enabled?: boolean;
+};
+
 export type OpenSlideConfig = {
   base?: string;
   slidesDir?: string;
@@ -20,4 +29,5 @@ export type OpenSlideConfig = {
    */
   locale?: Locale;
   build?: OpenSlideBuildConfig;
+  authoring?: OpenSlideAuthoringConfig;
 };

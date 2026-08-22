@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { authoringEnabled } from './authoring';
 
 export type AssetEntry = {
   name: string;
@@ -169,7 +170,7 @@ export type UseAssetsResult = {
 const NOOP_RESULT = { ok: false, status: 0 } as const;
 
 export function useAssets(slideId: string): UseAssetsResult {
-  const available = import.meta.env.DEV;
+  const available = authoringEnabled;
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   const [loading, setLoading] = useState(available);
 
