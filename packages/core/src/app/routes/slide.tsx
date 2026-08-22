@@ -731,7 +731,7 @@ export function Slide() {
               {view === 'slides' && import.meta.env.DEV && (
                 <DesignToggleButton active={designOpen} onToggle={() => setDesignOpen((v) => !v)} />
               )}
-              {view === 'slides' && <InspectToggleButton />}
+              {view === 'slides' && !isMobile && <InspectToggleButton />}
               <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-hairline md:block" />
               {view === 'slides' && (
                 <div className="inline-flex items-stretch">
