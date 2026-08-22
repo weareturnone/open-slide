@@ -16,8 +16,11 @@ export type {
 export {
   duplicatePageInDefaultExportInSource,
   duplicateNotesElementInSource,
+  removeNotesElementInSource,
   removePageFromDefaultExportInSource,
   reorderDefaultExportPagesInSource,
   reorderNotesArrayInSource,
+  updateMetaTitleInSource,
+  validateSlideName,
 } from './slide-ops.ts';
 export { applyRevertAsset } from './revert-asset.ts';

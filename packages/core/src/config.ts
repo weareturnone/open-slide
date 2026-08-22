@@ -13,6 +13,10 @@ export type OpenSlideAuthoringConfig = {
    * HTTP contracts when this is enabled.
    */
   enabled?: boolean;
+  publish?: {
+    statusEndpoint: string;
+    publishEndpoint: string;
+  };
 };
 
 export type OpenSlideConfig = {
