@@ -296,6 +296,7 @@ export const en: Locale = {
     sectionAria: 'Slide assets',
     eyebrow: 'Assets',
     scopeSlide: 'This slide',
+    scopeDocument: 'This document',
     scopeGlobal: 'Global',
     fileCount: { one: '{count} file', other: '{count} files' },
     createdAt: 'Created',

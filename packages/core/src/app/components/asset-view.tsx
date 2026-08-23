@@ -183,6 +183,8 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
   const dragDepth = useRef(0);
   const inputId = useId();
   const t = useLocale();
+  const contentScopeLabel = kind === 'document' ? t.asset.scopeDocument : t.asset.scopeSlide;
+  const contentAssetPath = `${kind === 'document' ? 'documents' : 'slides'}/${slideId}/assets/`;
 
   const deferredQuery = useDeferredValue(query);
   const visibleAssets = useMemo(
@@ -328,14 +330,14 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
           ) : (
             <Tabs value={scope} onValueChange={(next) => setScope(next as Scope)}>
               <TabsList>
-                <TabsTrigger value="slide">{t.asset.scopeSlide}</TabsTrigger>
+                <TabsTrigger value="slide">{contentScopeLabel}</TabsTrigger>
                 <TabsTrigger value="global">{t.asset.scopeGlobal}</TabsTrigger>
               </TabsList>
             </Tabs>
           )}
           <p className="min-w-0 truncate text-[12px] text-muted-foreground">
             <span className="font-mono text-[11.5px]">
-              {scope === 'global' ? 'assets/' : `slides/${slideId}/assets/`}
+              {scope === 'global' ? 'assets/' : contentAssetPath}
             </span>
             {!loading && (
               <>

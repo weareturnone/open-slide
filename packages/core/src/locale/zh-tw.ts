@@ -294,6 +294,7 @@ export const zhTW: Locale = {
     sectionAria: '投影片素材',
     eyebrow: '素材',
     scopeSlide: '此投影片',
+    scopeDocument: '此文件',
     scopeGlobal: '全域',
     fileCount: { one: '{count} 個檔案', other: '{count} 個檔案' },
     createdAt: '建立時間',

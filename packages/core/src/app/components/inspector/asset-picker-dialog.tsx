@@ -76,7 +76,9 @@ export function AssetPickerDialog({
         </DialogHeader>
         <Tabs value={scope} onValueChange={(next) => setScope(next as PickerScope)}>
           <TabsList>
-            <TabsTrigger value="slide">{t.asset.scopeSlide}</TabsTrigger>
+            <TabsTrigger value="slide">
+              {kind === 'document' ? t.asset.scopeDocument : t.asset.scopeSlide}
+            </TabsTrigger>
             <TabsTrigger value="global">{t.asset.scopeGlobal}</TabsTrigger>
           </TabsList>
         </Tabs>
