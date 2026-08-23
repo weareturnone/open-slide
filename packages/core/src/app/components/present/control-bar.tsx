@@ -34,6 +34,7 @@ type Props = {
   onBlackout: (mode: 'black' | 'white') => void;
   onLaser: () => void;
   onPresenter: () => void;
+  showPresenter?: boolean;
   onToggleFullscreen: () => void;
   onHelp: () => void;
   onExit: () => void;
@@ -61,6 +62,7 @@ export function PresentControlBar({
   onBlackout,
   onLaser,
   onPresenter,
+  showPresenter = true,
   onToggleFullscreen,
   onHelp,
   onExit,
@@ -138,9 +140,11 @@ export function PresentControlBar({
             <BarButton label={t.present.laserAria} onClick={onLaser} active={laser}>
               <Crosshair className="size-4" />
             </BarButton>
-            <BarButton label={t.present.presenterAria} onClick={onPresenter}>
-              <MonitorSpeaker className="size-4" />
-            </BarButton>
+            {showPresenter && (
+              <BarButton label={t.present.presenterAria} onClick={onPresenter}>
+                <MonitorSpeaker className="size-4" />
+              </BarButton>
+            )}
             <BarButton label={fullscreenAria} onClick={onToggleFullscreen}>
               {windowed ? <Maximize className="size-4" /> : <Minimize className="size-4" />}
             </BarButton>

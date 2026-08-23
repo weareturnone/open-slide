@@ -3,7 +3,7 @@ import { useClickPageNavigation } from '@/lib/use-click-page-navigation';
 import { useWheelPageNavigation } from '@/lib/use-wheel-page-navigation';
 import { cn } from '@/lib/utils';
 import type { DesignSystem } from '../lib/design';
-import type { Page } from '../lib/sdk';
+import type { ContentKind, Page } from '../lib/sdk';
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from '../lib/sdk';
 import type { EntryDirection, StepAggregate, StepController } from '../lib/step-context';
 import type { SlideTransition } from '../lib/transition';
@@ -50,6 +50,7 @@ type Props = {
   fullscreen?: boolean;
   canvasWidth?: number;
   canvasHeight?: number;
+  kind?: ContentKind;
 };
 
 export function Player({
@@ -66,6 +67,7 @@ export function Player({
   fullscreen = true,
   canvasWidth = CANVAS_WIDTH,
   canvasHeight = CANVAS_HEIGHT,
+  kind = 'slide',
 }: Props) {
   const isMobile = useIsMobile();
   const prefersReducedMotion = usePrefersReducedMotion();
@@ -88,6 +90,7 @@ export function Player({
   const [mobileChromeDeadline, setMobileChromeDeadline] = useState(0);
   const [startedAt] = useState(() => Date.now());
   const [windowed, setWindowed] = useState(!fullscreen);
+  const showPresenter = kind !== 'document';
   // Mirror windowed into a ref so the fullscreenchange listener can read the
   // latest value without re-binding — exits from window mode must not call
   // onExit, but exits initiated by the browser (Esc in fullscreen) must.
@@ -356,7 +359,7 @@ export function Player({
       } else if (e.key === 'h' || e.key === 'H' || e.key === '?') {
         e.preventDefault();
         setHelpOpen((v) => !v);
-      } else if ((e.key === 'p' || e.key === 'P') && slideId) {
+      } else if ((e.key === 'p' || e.key === 'P') && slideId && showPresenter) {
         e.preventDefault();
         openPresenterWindow(slideId);
       }
@@ -376,6 +379,7 @@ export function Player({
     handleIndexChange,
     pages.length,
     slideId,
+    showPresenter,
   ]);
 
   // The control bar + progress strip only surface when the pointer is in
@@ -449,6 +453,7 @@ export function Player({
             onBlackout={(mode) => setBlackout((c) => (c === mode ? null : mode))}
             onLaser={() => setLaser((v) => !v)}
             onPresenter={() => slideId && openPresenterWindow(slideId)}
+            showPresenter={showPresenter}
             onToggleFullscreen={toggleFullscreen}
             onHelp={() => setHelpOpen(true)}
             onExit={onExit}
@@ -466,7 +471,12 @@ export function Player({
             canvasWidth={canvasWidth}
             canvasHeight={canvasHeight}
           />
-          <PresentHelpOverlay open={helpOpen} onOpenChange={setHelpOpen} container={rootEl} />
+          <PresentHelpOverlay
+            open={helpOpen}
+            onOpenChange={setHelpOpen}
+            container={rootEl}
+            showPresenter={showPresenter}
+          />
         </div>
       )}
     </div>

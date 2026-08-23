@@ -376,6 +376,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
           fullscreen={playMode === 'fullscreen'}
           canvasWidth={canvas.width}
           canvasHeight={canvas.height}
+          kind={kind}
         />
         {!presentReady && slide && pageCount > 0 && (
           <SlidePreloadLayer
@@ -482,6 +483,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         allowExit={false}
         canvasWidth={canvas.width}
         canvasHeight={canvas.height}
+        kind={kind}
       />
     );
   }
