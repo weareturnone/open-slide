@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { authoringEnabled } from './authoring';
+import { authoringEnabled, notifyAuthoringChanged } from './authoring';
+import type { ContentKind } from './sdk';
 
 export type AssetEntry = {
   name: string;
@@ -13,8 +14,16 @@ export type AssetEntry = {
 
 export type UploadOptions = { overwrite?: boolean };
 
-export async function listAssets(slideId: string): Promise<AssetEntry[]> {
-  const res = await fetch(`/__assets/${slideId}`);
+function assetUrl(slideId: string, suffix = '', kind: ContentKind = 'slide'): string {
+  const query = kind === 'document' ? '?kind=document' : '';
+  return `/__assets/${slideId}${suffix}${query}`;
+}
+
+export async function listAssets(
+  slideId: string,
+  kind: ContentKind = 'slide',
+): Promise<AssetEntry[]> {
+  const res = await fetch(assetUrl(slideId, '', kind));
   if (!res.ok) throw new Error(`GET /__assets/${slideId} ${res.status}`);
   const data = (await res.json()) as { assets?: AssetEntry[] };
   return data.assets ?? [];
@@ -24,8 +33,12 @@ export async function uploadAsset(
   slideId: string,
   file: File,
   opts: UploadOptions = {},
+  kind: ContentKind = 'slide',
 ): Promise<Response> {
-  const qs = opts.overwrite ? '?overwrite=1' : '';
+  const params = new URLSearchParams();
+  if (opts.overwrite) params.set('overwrite', '1');
+  if (kind === 'document') params.set('kind', 'document');
+  const qs = params.size > 0 ? `?${params.toString()}` : '';
   return fetch(`/__assets/${slideId}/${encodeURIComponent(file.name)}${qs}`, {
     method: 'POST',
     headers: {
@@ -36,22 +49,35 @@ export async function uploadAsset(
   });
 }
 
-async function renameAsset(slideId: string, from: string, to: string): Promise<Response> {
-  return fetch(`/__assets/${slideId}/${encodeURIComponent(from)}`, {
+async function renameAsset(
+  slideId: string,
+  from: string,
+  to: string,
+  kind: ContentKind = 'slide',
+): Promise<Response> {
+  return fetch(assetUrl(slideId, `/${encodeURIComponent(from)}`, kind), {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name: to }),
   });
 }
 
-async function deleteAsset(slideId: string, name: string): Promise<Response> {
-  return fetch(`/__assets/${slideId}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+async function deleteAsset(
+  slideId: string,
+  name: string,
+  kind: ContentKind = 'slide',
+): Promise<Response> {
+  return fetch(assetUrl(slideId, `/${encodeURIComponent(name)}`, kind), { method: 'DELETE' });
 }
 
 export type AssetUsage = { slideId: string; count: number };
 
-export async function listAssetUsages(slideId: string, name: string): Promise<AssetUsage[]> {
-  const res = await fetch(`/__assets/${slideId}/${encodeURIComponent(name)}/usages`);
+export async function listAssetUsages(
+  slideId: string,
+  name: string,
+  kind: ContentKind = 'slide',
+): Promise<AssetUsage[]> {
+  const res = await fetch(assetUrl(slideId, `/${encodeURIComponent(name)}/usages`, kind));
   if (!res.ok) return [];
   const data = (await res.json().catch(() => null)) as { usages?: AssetUsage[] } | null;
   return data?.usages ?? [];
@@ -60,11 +86,12 @@ export async function listAssetUsages(slideId: string, name: string): Promise<As
 export async function revertAssetUsage(
   slideId: string,
   assetPath: string,
+  kind: ContentKind = 'slide',
 ): Promise<{ ok: boolean; status: number }> {
   const res = await fetch('/__edit/revert-asset', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ slideId, assetPath }),
+    body: JSON.stringify({ slideId, assetPath, kind }),
   });
   return { ok: res.ok, status: res.status };
 }
@@ -72,20 +99,22 @@ export async function revertAssetUsage(
 export async function uploadWithAutoRename(
   slideId: string,
   file: File,
+  kind: ContentKind = 'slide',
 ): Promise<{ ok: boolean; status: number; entry: AssetEntry | null }> {
   // Vite's default `assetsInclude` matches asset extensions case-sensitively,
   // so `<img src="./assets/foo.JPG" />` (which the placeholder edit rewrites
   // into a real `import`) fails to parse. Lowercase the extension so the
   // import path is always one Vite recognizes.
   let uploaded = lowercaseExtension(file);
-  let res = await uploadAsset(slideId, uploaded);
+  let res = await uploadAsset(slideId, uploaded, {}, kind);
   if (res.status === 409) {
-    const list = await listAssets(slideId);
+    const list = await listAssets(slideId, kind);
     const taken = new Set(list.map((a) => a.name));
     uploaded = renamedCopy(uploaded, taken);
-    res = await uploadAsset(slideId, uploaded);
+    res = await uploadAsset(slideId, uploaded, {}, kind);
   }
   if (!res.ok) return { ok: false, status: res.status, entry: null };
+  notifyAuthoringChanged();
   const body = (await res.json().catch(() => null)) as Partial<AssetEntry> | null;
   const now = Date.now();
   const entry: AssetEntry = {
@@ -94,7 +123,7 @@ export async function uploadWithAutoRename(
     createdAt: body?.createdAt ?? now,
     mtime: body?.mtime ?? now,
     mime: body?.mime ?? uploaded.type ?? 'application/octet-stream',
-    url: body?.url ?? `/__assets/${slideId}/${encodeURIComponent(uploaded.name)}`,
+    url: body?.url ?? assetUrl(slideId, `/${encodeURIComponent(uploaded.name)}`, kind),
     unused: body?.unused ?? false,
   };
   return { ok: true, status: res.status, entry };
@@ -169,22 +198,22 @@ export type UseAssetsResult = {
 
 const NOOP_RESULT = { ok: false, status: 0 } as const;
 
-export function useAssets(slideId: string): UseAssetsResult {
+export function useAssets(slideId: string, kind: ContentKind = 'slide'): UseAssetsResult {
   const available = authoringEnabled;
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   const [loading, setLoading] = useState(available);
 
   const refresh = useCallback(async () => {
     if (!available) return;
-    const next = await listAssets(slideId);
+    const next = await listAssets(slideId, kind);
     setAssets(next);
-  }, [slideId]);
+  }, [slideId, kind]);
 
   useEffect(() => {
     if (!available) return;
     let cancelled = false;
     setLoading(true);
-    listAssets(slideId)
+    listAssets(slideId, kind)
       .then((next) => {
         if (!cancelled) {
           setAssets(next);
@@ -197,7 +226,7 @@ export function useAssets(slideId: string): UseAssetsResult {
     return () => {
       cancelled = true;
     };
-  }, [slideId]);
+  }, [slideId, kind]);
 
   useEffect(() => {
     if (!available || !import.meta.hot) return;
@@ -206,12 +235,19 @@ export function useAssets(slideId: string): UseAssetsResult {
         refresh().catch(() => {});
       }
     };
-    const slideHandler = (data: { slideId?: unknown; slideIds?: unknown } | undefined) => {
-      const changedIds = Array.isArray(data?.slideIds)
-        ? data.slideIds
-        : typeof data?.slideId === 'string'
-          ? [data.slideId]
-          : [];
+    const slideHandler = (
+      data:
+        | {
+            slideId?: unknown;
+            slideIds?: unknown;
+            documentId?: unknown;
+            documentIds?: unknown;
+          }
+        | undefined,
+    ) => {
+      const ids = kind === 'document' ? data?.documentIds : data?.slideIds;
+      const id = kind === 'document' ? data?.documentId : data?.slideId;
+      const changedIds = Array.isArray(ids) ? ids : typeof id === 'string' ? [id] : [];
       if (slideId === '@global' ? changedIds.length > 0 : changedIds.includes(slideId)) {
         refresh().catch(() => {});
       }
@@ -222,36 +258,45 @@ export function useAssets(slideId: string): UseAssetsResult {
       import.meta.hot?.off('open-slide:assets-changed', assetHandler);
       import.meta.hot?.off('open-slide:slide-changed', slideHandler);
     };
-  }, [slideId, refresh]);
+  }, [slideId, kind, refresh]);
 
   const upload = useCallback(
     async (file: File, opts?: UploadOptions) => {
       if (!available) return NOOP_RESULT;
-      const res = await uploadAsset(slideId, file, opts);
-      if (res.ok) await refresh();
+      const res = await uploadAsset(slideId, file, opts, kind);
+      if (res.ok) {
+        notifyAuthoringChanged();
+        await refresh();
+      }
       return { ok: res.ok, status: res.status };
     },
-    [slideId, refresh],
+    [slideId, kind, refresh],
   );
 
   const rename = useCallback(
     async (from: string, to: string) => {
       if (!available) return NOOP_RESULT;
-      const res = await renameAsset(slideId, from, to);
-      if (res.ok) await refresh();
+      const res = await renameAsset(slideId, from, to, kind);
+      if (res.ok) {
+        notifyAuthoringChanged();
+        await refresh();
+      }
       return { ok: res.ok, status: res.status };
     },
-    [slideId, refresh],
+    [slideId, kind, refresh],
   );
 
   const remove = useCallback(
     async (name: string) => {
       if (!available) return NOOP_RESULT;
-      const res = await deleteAsset(slideId, name);
-      if (res.ok) await refresh();
+      const res = await deleteAsset(slideId, name, kind);
+      if (res.ok) {
+        notifyAuthoringChanged();
+        await refresh();
+      }
       return { ok: res.ok, status: res.status };
     },
-    [slideId, refresh],
+    [slideId, kind, refresh],
   );
 
   return { assets, loading, available, upload, rename, remove, refresh };

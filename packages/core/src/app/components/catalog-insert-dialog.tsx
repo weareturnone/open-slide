@@ -4,11 +4,6 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
-  deployedStudioUrl,
-  publishHostedDraft,
-  waitForHostedDeployment,
-} from '@/lib/hosted-deployment';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -16,6 +11,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  deployedStudioUrl,
+  publishHostedDraft,
+  waitForHostedDeployment,
+} from '@/lib/hosted-deployment';
+import type { ContentKind } from '@/lib/sdk';
 import { cn } from '@/lib/utils';
 
 type CatalogEntry = {
@@ -33,10 +34,12 @@ export function CatalogInsertDialog({
   slideId,
   index,
   onClose,
+  kind = 'slide',
 }: {
   slideId: string;
   index: number | null;
   onClose: () => void;
+  kind?: ContentKind;
 }) {
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -46,7 +49,8 @@ export function CatalogInsertDialog({
   useEffect(() => {
     if (index === null || !catalogConfig) return;
     setLoading(true);
-    fetch(catalogConfig.listEndpoint, { cache: 'no-store' })
+    const endpoint = import.meta.env.DEV ? '/__catalog' : catalogConfig.listEndpoint;
+    fetch(`${endpoint}?kind=${kind}`, { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Catalog request failed with ${response.status}`);
         const body = (await response.json()) as { entries?: CatalogEntry[] };
@@ -56,18 +60,19 @@ export function CatalogInsertDialog({
       })
       .catch((error) => toast.error(String((error as Error).message ?? error)))
       .finally(() => setLoading(false));
-  }, [index]);
+  }, [index, kind]);
 
-  if (!catalogConfig || !publishConfig) return null;
+  if (!catalogConfig || (!import.meta.env.DEV && !publishConfig)) return null;
 
   const insert = async () => {
     if (index === null || !selectedId || preparing) return;
     setPreparing(true);
     try {
-      const insertResponse = await fetch(catalogConfig.insertEndpoint, {
+      const endpoint = import.meta.env.DEV ? '/__catalog' : catalogConfig.insertEndpoint;
+      const insertResponse = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, index, templateId: selectedId }),
+        body: JSON.stringify({ slideId, index, templateId: selectedId, kind }),
       });
       const inserted = (await insertResponse.json().catch(() => ({}))) as {
         error?: string;
@@ -76,9 +81,20 @@ export function CatalogInsertDialog({
       if (!insertResponse.ok) {
         throw new Error(inserted.error ?? `Insert failed with ${insertResponse.status}`);
       }
-      if (!inserted.commitSha) throw new Error('Insert response did not include a commit');
+      if (import.meta.env.DEV) {
+        toast.success(`${kind === 'document' ? 'Page' : 'Slide'} inserted.`);
+        setPreparing(false);
+        onClose();
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String(index + 1));
+        window.location.assign(url);
+        return;
+      }
+      if (!inserted.commitSha || !publishConfig) {
+        throw new Error('Insert response did not include a commit');
+      }
       const targetSha = await publishHostedDraft(publishConfig, inserted.commitSha);
-      toast.success('Slide inserted. Deploying now.');
+      toast.success(`${kind === 'document' ? 'Page' : 'Slide'} inserted. Deploying now.`);
       setPreparing(false);
       onClose();
       await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
@@ -95,7 +111,7 @@ export function CatalogInsertDialog({
     <Dialog open={index !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Insert a slide</DialogTitle>
+          <DialogTitle>Insert a {kind === 'document' ? 'page' : 'slide'}</DialogTitle>
           <DialogDescription>Choose a Turn.One layout for this exact position.</DialogDescription>
         </DialogHeader>
         {loading ? (
@@ -118,8 +134,14 @@ export function CatalogInsertDialog({
                 )}
               >
                 <span
-                  className="mb-3 grid aspect-video place-items-center rounded-md border border-white/10 bg-[#0d0f64] text-center text-lg font-semibold text-white"
-                  style={{ boxShadow: `inset 0 -5px 0 ${entry.accent}` }}
+                  className={cn(
+                    'mb-3 grid place-items-center rounded-md border border-white/10 bg-[#0d0f64] text-center text-lg font-semibold text-white',
+                    kind === 'document' ? 'mx-auto max-h-52 w-full' : 'aspect-video',
+                  )}
+                  style={{
+                    boxShadow: `inset 0 -5px 0 ${entry.accent}`,
+                    ...(kind === 'document' ? { aspectRatio: '794 / 1123' } : {}),
+                  }}
                 >
                   {entry.name}
                 </span>
@@ -145,7 +167,9 @@ export function CatalogInsertDialog({
             ) : (
               <Plus className="size-3.5" />
             )}
-            {preparing ? 'Preparing slide' : 'Insert slide'}
+            {preparing
+              ? `Preparing ${kind === 'document' ? 'page' : 'slide'}`
+              : `Insert ${kind === 'document' ? 'page' : 'slide'}`}
           </Button>
         </DialogFooter>
       </DialogContent>

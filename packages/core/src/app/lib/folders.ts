@@ -1,6 +1,7 @@
 import buildManifest from 'virtual:open-slide/folders';
 import { useCallback, useEffect, useState } from 'react';
-import type { Folder, FolderIcon, FoldersManifest } from './sdk';
+import { notifyAuthoringChanged } from './authoring';
+import type { ContentKind, Folder, FolderIcon, FoldersManifest } from './sdk';
 
 const EMPTY: FoldersManifest = { folders: [], assignments: {} };
 
@@ -24,8 +25,12 @@ async function getManifest(): Promise<FoldersManifest> {
   };
 }
 
-async function patchSlideName(slideId: string, name: string): Promise<void> {
-  const res = await fetch(`/__slides/${slideId}`, {
+function kindQuery(kind: ContentKind): string {
+  return kind === 'document' ? '?kind=document' : '';
+}
+
+async function patchSlideName(slideId: string, name: string, kind: ContentKind): Promise<void> {
+  const res = await fetch(`/__slides/${slideId}${kindQuery(kind)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -33,21 +38,25 @@ async function patchSlideName(slideId: string, name: string): Promise<void> {
   if (!res.ok) throw new Error(`PATCH /__slides/${slideId} ${res.status}`);
 }
 
-async function duplicateSlideReq(slideId: string, newId?: string): Promise<string> {
+async function duplicateSlideReq(
+  slideId: string,
+  newId: string | undefined,
+  kind: ContentKind,
+): Promise<string> {
   const init: RequestInit = { method: 'POST' };
   if (newId !== undefined) {
     init.headers = { 'content-type': 'application/json' };
     init.body = JSON.stringify({ newId });
   }
-  const res = await fetch(`/__slides/${slideId}/duplicate`, init);
+  const res = await fetch(`/__slides/${slideId}/duplicate${kindQuery(kind)}`, init);
   if (!res.ok) throw new Error(`POST /__slides/${slideId}/duplicate ${res.status}`);
   const body = (await res.json()) as { slideId?: unknown };
   if (typeof body.slideId !== 'string') throw new Error('duplicate response missing slideId');
   return body.slideId;
 }
 
-async function deleteSlideReq(slideId: string): Promise<void> {
-  const res = await fetch(`/__slides/${slideId}`, { method: 'DELETE' });
+async function deleteSlideReq(slideId: string, kind: ContentKind): Promise<void> {
+  const res = await fetch(`/__slides/${slideId}${kindQuery(kind)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`DELETE /__slides/${slideId} ${res.status}`);
 }
 
@@ -105,9 +114,9 @@ export type UseFoldersResult = {
   remove: (id: string) => Promise<void>;
   reorder: (ids: string[]) => Promise<void>;
   assign: (slideId: string, folderId: string | null) => Promise<void>;
-  renameSlide: (slideId: string, name: string) => Promise<void>;
-  duplicateSlide: (slideId: string, newId?: string) => Promise<string>;
-  deleteSlide: (slideId: string) => Promise<void>;
+  renameSlide: (slideId: string, name: string, kind?: ContentKind) => Promise<void>;
+  duplicateSlide: (slideId: string, newId?: string, kind?: ContentKind) => Promise<string>;
+  deleteSlide: (slideId: string, kind?: ContentKind) => Promise<void>;
   refresh: () => Promise<void>;
 };
 
@@ -199,16 +208,18 @@ export function useFolders(): UseFoldersResult {
   );
 
   const renameSlide = useCallback(
-    async (slideId: string, name: string) => {
-      await patchSlideName(slideId, name);
+    async (slideId: string, name: string, kind: ContentKind = 'slide') => {
+      await patchSlideName(slideId, name, kind);
+      notifyAuthoringChanged();
       await refresh();
     },
     [refresh],
   );
 
   const duplicateSlide = useCallback(
-    async (slideId: string, newId?: string) => {
-      const duplicatedId = await duplicateSlideReq(slideId, newId);
+    async (slideId: string, newId?: string, kind: ContentKind = 'slide') => {
+      const duplicatedId = await duplicateSlideReq(slideId, newId, kind);
+      notifyAuthoringChanged();
       await refresh();
       return duplicatedId;
     },
@@ -216,8 +227,9 @@ export function useFolders(): UseFoldersResult {
   );
 
   const deleteSlide = useCallback(
-    async (slideId: string) => {
-      await deleteSlideReq(slideId);
+    async (slideId: string, kind: ContentKind = 'slide') => {
+      await deleteSlideReq(slideId, kind);
+      notifyAuthoringChanged();
       await refresh();
     },
     [refresh],

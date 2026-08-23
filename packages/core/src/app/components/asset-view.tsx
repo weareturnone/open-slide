@@ -67,10 +67,11 @@ import {
   searchSvgl,
   useAssets,
 } from '@/lib/assets';
+import type { ContentKind } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 
-type Props = { slideId: string | null };
+type Props = { slideId: string | null; kind?: ContentKind };
 
 type Scope = 'slide' | 'global';
 type ViewMode = 'grid' | 'list';
@@ -161,11 +162,11 @@ type ConflictState = {
   resolve: (decision: 'replace' | 'rename' | 'cancel') => void;
 };
 
-export function AssetView({ slideId }: Props) {
+export function AssetView({ slideId, kind = 'slide' }: Props) {
   const lockedToGlobal = slideId === null;
   const [scope, setScope] = useState<Scope>(lockedToGlobal ? 'global' : 'slide');
   const effectiveSlideId = scope === 'global' || slideId === null ? GLOBAL_SLIDE_ID : slideId;
-  const { assets, loading, available, upload, rename, remove } = useAssets(effectiveSlideId);
+  const { assets, loading, available, upload, rename, remove } = useAssets(effectiveSlideId, kind);
   const [dragActive, setDragActive] = useState(false);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [preview, setPreview] = useState<AssetEntry | null>(null);
@@ -278,7 +279,7 @@ export function AssetView({ slideId }: Props) {
   function prepareDelete(asset: AssetEntry) {
     setConfirmDelete(asset);
     setConfirmDeleteUsages(null);
-    listAssetUsages(effectiveSlideId, asset.name)
+    listAssetUsages(effectiveSlideId, asset.name, kind)
       .then((usages) => setConfirmDeleteUsages(usages))
       .catch(() => setConfirmDeleteUsages([]));
   }
@@ -596,7 +597,7 @@ export function AssetView({ slideId }: Props) {
             const assetPath =
               scope === 'global' ? `@assets/${target.name}` : `./assets/${target.name}`;
             for (const u of usages) {
-              const rev = await revertAssetUsage(u.slideId, assetPath);
+              const rev = await revertAssetUsage(u.slideId, assetPath, kind);
               if (!rev.ok) {
                 toast.error(format(t.asset.toastRevertFailed, { slideId: u.slideId }));
                 return;

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SlideModule } from './sdk';
-import { loadSlide, slideChangeIncludes } from './slides';
+import type { ContentKind, SlideModule } from './sdk';
+import { loadDocument, loadSlide, slideChangeIncludes } from './slides';
 
-export function useSlideModule(slideId: string) {
+export function useSlideModule(slideId: string, kind: ContentKind = 'slide') {
   const [slide, setSlide] = useState<SlideModule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loadSeqRef = useRef(0);
@@ -12,7 +12,7 @@ export function useSlideModule(slideId: string) {
       const seq = ++loadSeqRef.current;
       if (reset) setSlide(null);
       setError(null);
-      loadSlide(slideId)
+      (kind === 'document' ? loadDocument(slideId) : loadSlide(slideId))
         .then((mod) => {
           if (seq === loadSeqRef.current) setSlide(mod);
         })
@@ -20,7 +20,7 @@ export function useSlideModule(slideId: string) {
           if (seq === loadSeqRef.current) setError(String(e?.message ?? e));
         });
     },
-    [slideId],
+    [kind, slideId],
   );
 
   useEffect(() => {
@@ -31,7 +31,7 @@ export function useSlideModule(slideId: string) {
     if (!import.meta.hot) return;
     let cancelled = false;
     const handler = (data: unknown) => {
-      if (slideChangeIncludes(data, slideId)) {
+      if (slideChangeIncludes(data, slideId, kind)) {
         queueMicrotask(() => {
           if (!cancelled) reload(false);
         });
@@ -42,7 +42,7 @@ export function useSlideModule(slideId: string) {
       cancelled = true;
       import.meta.hot?.off('open-slide:slide-changed', handler);
     };
-  }, [slideId, reload]);
+  }, [kind, slideId, reload]);
 
   return { slide, error, reload };
 }

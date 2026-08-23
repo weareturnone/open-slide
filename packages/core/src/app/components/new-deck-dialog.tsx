@@ -13,17 +13,18 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
-  deployedStudioUrl,
-  publishHostedDraft,
-  waitForHostedDeployment,
-} from '@/lib/hosted-deployment';
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  deployedStudioUrl,
+  publishHostedDraft,
+  waitForHostedDeployment,
+} from '@/lib/hosted-deployment';
+import type { ContentKind } from '@/lib/sdk';
 
 type CatalogEntry = { id: string; name: string; description: string };
 
@@ -40,7 +41,15 @@ function slugify(value: string) {
     .slice(0, 64);
 }
 
-export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function NewDeckDialog({
+  open,
+  onClose,
+  kind = 'slide',
+}: {
+  open: boolean;
+  onClose: () => void;
+  kind?: ContentKind;
+}) {
   const [title, setTitle] = useState('');
   const [deckId, setDeckId] = useState('');
   const [idTouched, setIdTouched] = useState(false);
@@ -50,7 +59,8 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
 
   useEffect(() => {
     if (!open || !catalogConfig) return;
-    fetch(catalogConfig.listEndpoint, { cache: 'no-store' })
+    const endpoint = import.meta.env.DEV ? '/__catalog' : catalogConfig.listEndpoint;
+    fetch(`${endpoint}?kind=${kind}`, { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Catalog request failed with ${response.status}`);
         const body = (await response.json()) as { entries?: CatalogEntry[] };
@@ -59,31 +69,44 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
         setTemplateId((current) => current || next[0]?.id || '');
       })
       .catch((error) => toast.error(String((error as Error).message ?? error)));
-  }, [open]);
+  }, [open, kind]);
 
-  if (!deckConfig || !catalogConfig || !publishConfig) return null;
+  if (!deckConfig || !catalogConfig || (!import.meta.env.DEV && !publishConfig)) return null;
 
   const create = async () => {
     if (!title.trim() || !deckId || !templateId || creating) return;
     setCreating(true);
     try {
-      const response = await fetch(deckConfig.createEndpoint, {
+      const endpoint = import.meta.env.DEV ? '/__decks' : deckConfig.createEndpoint;
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), deckId, templateId }),
+        body: JSON.stringify({ title: title.trim(), deckId, templateId, kind }),
       });
       const created = (await response.json().catch(() => ({}))) as {
         error?: string;
         commitSha?: string;
       };
       if (!response.ok) throw new Error(created.error ?? `Create failed with ${response.status}`);
-      if (!created.commitSha) throw new Error('Create response did not include a commit');
+      if (import.meta.env.DEV) {
+        toast.success(`${kind === 'document' ? 'Document' : 'Deck'} created.`);
+        setCreating(false);
+        onClose();
+        window.location.assign(`/${kind === 'document' ? 'd' : 's'}/${encodeURIComponent(deckId)}`);
+        return;
+      }
+      if (!created.commitSha || !publishConfig) {
+        throw new Error('Create response did not include a commit');
+      }
       const targetSha = await publishHostedDraft(publishConfig, created.commitSha);
-      toast.success('Deck created. Deploying now.');
+      toast.success(`${kind === 'document' ? 'Document' : 'Deck'} created. Deploying now.`);
       setCreating(false);
       onClose();
       await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
-      const url = deployedStudioUrl(`/s/${encodeURIComponent(deckId)}`, targetSha);
+      const url = deployedStudioUrl(
+        `/${kind === 'document' ? 'd' : 's'}/${encodeURIComponent(deckId)}`,
+        targetSha,
+      );
       window.location.assign(url.toString());
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
@@ -95,9 +118,10 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New deck</DialogTitle>
+          <DialogTitle>New {kind === 'document' ? 'document' : 'deck'}</DialogTitle>
           <DialogDescription>
-            Create a repository-backed deck from a Turn.One layout.
+            Create a repository-backed {kind === 'document' ? 'document' : 'deck'} from a Turn.One
+            layout.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -117,7 +141,7 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
             />
           </label>
           <label htmlFor="new-deck-id" className="block space-y-1.5 text-sm">
-            <span className="font-medium">Deck ID</span>
+            <span className="font-medium">{kind === 'document' ? 'Document' : 'Deck'} ID</span>
             <Input
               id="new-deck-id"
               value={deckId}
@@ -165,7 +189,9 @@ export function NewDeckDialog({ open, onClose }: { open: boolean; onClose: () =>
             ) : (
               <Plus className="size-3.5" />
             )}
-            {creating ? 'Creating deck' : 'Create deck'}
+            {creating
+              ? `Creating ${kind === 'document' ? 'document' : 'deck'}`
+              : `Create ${kind === 'document' ? 'document' : 'deck'}`}
           </Button>
         </DialogFooter>
       </DialogContent>

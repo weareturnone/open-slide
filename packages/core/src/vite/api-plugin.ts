@@ -1,5 +1,6 @@
 import type { Plugin } from 'vite';
 import { registerAssetRoutes } from './routes/assets.ts';
+import { registerCatalogRoutes } from './routes/catalog.ts';
 import { registerCommentRoutes } from './routes/comments.ts';
 import { type ApiPluginOptions, makeContext } from './routes/context.ts';
 import { registerEditRoutes } from './routes/edit.ts';
@@ -25,6 +26,7 @@ export function apiPlugin(opts: ApiPluginOptions): Plugin {
       registerEditRoutes(server, ctx);
       registerCommentRoutes(server, ctx);
       registerSlideRoutes(server, ctx);
+      registerCatalogRoutes(server, ctx);
       registerAssetRoutes(server, ctx);
       registerSvglRoutes(server);
       registerFolderRoutes(server, ctx);

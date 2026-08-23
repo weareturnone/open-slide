@@ -20,6 +20,8 @@ export type OpenSlideAuthoringConfig = {
   catalog?: {
     listEndpoint: string;
     insertEndpoint: string;
+    /** Workspace-relative module used by the local Vite authoring adapter. */
+    sourceModule?: string;
   };
   decks?: {
     createEndpoint: string;
@@ -29,6 +31,7 @@ export type OpenSlideAuthoringConfig = {
 export type OpenSlideConfig = {
   base?: string;
   slidesDir?: string;
+  documentsDir?: string;
   themesDir?: string;
   assetsDir?: string;
   port?: number;

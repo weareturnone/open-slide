@@ -20,6 +20,7 @@ export function App() {
           {config.build.showSlideBrowser ? (
             <Route element={<HomeShell />}>
               <Route path="/" element={<Home />} />
+              <Route path="/documents" element={<Home kind="document" />} />
               <Route path="/themes" element={<ThemesGalleryPage />} />
               <Route path="/themes/:themeId" element={<ThemeDetailPage />} />
               <Route path="/assets" element={<AssetsPage />} />
@@ -28,6 +29,7 @@ export function App() {
             <Route path="/" element={<NotFound />} />
           )}
           <Route path="/s/:slideId" element={<Slide />} />
+          <Route path="/d/:slideId" element={<Slide kind="document" />} />
           <Route path="/s/:slideId/presenter" element={<Presenter />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { LanguageToggle } from '@/components/language-toggle';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { authoringEnabled } from '@/lib/authoring';
 import type { Folder, FolderIcon } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,7 @@ export const ALL_SLIDES_ID = '__all__';
 export const DRAFT_ID = 'draft';
 export const THEMES_ID = '__themes__';
 export const ASSETS_ID = '__assets__';
+export const DOCUMENTS_ID = '__documents__';
 
 export const FOLDER_DND_MIME = 'application/x-folder-id';
 
@@ -23,6 +25,7 @@ export function Sidebar({
   folders,
   countFor,
   allCount,
+  documentsCount,
   themesCount,
   assetsCount,
   selectedId,
@@ -39,6 +42,7 @@ export function Sidebar({
   folders: Folder[];
   countFor: (folderId: string | null) => number;
   allCount: number;
+  documentsCount: number;
   themesCount: number;
   assetsCount: number;
   selectedId: string;
@@ -148,13 +152,20 @@ export function Sidebar({
           onDropSlide={() => {}}
         />
         <FolderItem
+          row={{ kind: 'documents' }}
+          count={documentsCount}
+          selected={selectedId === DOCUMENTS_ID}
+          onSelect={() => onSelect(DOCUMENTS_ID)}
+          onDropSlide={() => {}}
+        />
+        <FolderItem
           row={{ kind: 'themes' }}
           count={themesCount}
           selected={selectedId === THEMES_ID}
           onSelect={() => onSelect(THEMES_ID)}
           onDropSlide={() => {}}
         />
-        {import.meta.env.DEV && (
+        {authoringEnabled && (
           <FolderItem
             row={{ kind: 'assets' }}
             count={assetsCount}

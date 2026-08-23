@@ -8,7 +8,6 @@ import {
   removePageFromDefaultExportInSource,
   reorderDefaultExportPagesInSource,
   reorderNotesArrayInSource,
-  resolveSlideEntry,
   rmSlideDir,
   SLIDE_ID_RE,
   updateMetaTitleInSource,
@@ -16,7 +15,13 @@ import {
 } from '../../editing/slide-ops.ts';
 import { readManifest, writeManifest } from '../../files/folders.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
-import { type ApiContext, json, readBody } from './context.ts';
+import {
+  type ApiContext,
+  contentRoot,
+  json,
+  readBody,
+  resolveContentEntryPath,
+} from './context.ts';
 
 // PUT    /__slides/:id/reorder            reorder pages { order: number[] }
 // DELETE /__slides/:id/pages/:i           remove page
@@ -32,6 +37,8 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
   server.middlewares.use('/__slides', async (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://local');
     const method = req.method ?? 'GET';
+    const kind = url.searchParams.get('kind') === 'document' ? 'document' : 'slide';
+    const root = contentRoot(ctx, kind);
 
     try {
       const reorderMatch = url.pathname.match(/^\/([^/]+)\/reorder$/);
@@ -51,7 +58,7 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           order.push(v as number);
         }
 
-        const entry = resolveSlideEntry(ctx.slidesRoot, slideId);
+        const entry = resolveContentEntryPath(ctx, slideId, kind);
         if (!entry) return json(res, 400, { error: 'invalid slideId' });
 
         let source: string;
@@ -96,7 +103,7 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           return json(res, requestCheck.status, { error: requestCheck.error });
         }
 
-        const entry = resolveSlideEntry(ctx.slidesRoot, slideId);
+        const entry = resolveContentEntryPath(ctx, slideId, kind);
         if (!entry) return json(res, 400, { error: 'invalid slideId' });
 
         let source: string;
@@ -146,14 +153,16 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           return json(res, 400, { error: 'invalid newId' });
         }
 
-        const duplicated = await duplicateSlideDir(ctx.slidesRoot, slideId, body.newId);
+        const duplicated = await duplicateSlideDir(root, slideId, body.newId);
         if (!duplicated.ok) return json(res, duplicated.status, { error: duplicated.error });
 
-        const manifest = await readManifest(ctx.manifestPath);
-        const folderId = manifest.assignments[slideId];
-        if (folderId) {
-          manifest.assignments[duplicated.slideId] = folderId;
-          await writeManifest(ctx.manifestPath, manifest);
+        if (kind === 'slide') {
+          const manifest = await readManifest(ctx.manifestPath);
+          const folderId = manifest.assignments[slideId];
+          if (folderId) {
+            manifest.assignments[duplicated.slideId] = folderId;
+            await writeManifest(ctx.manifestPath, manifest);
+          }
         }
         return json(res, 200, { ok: true, slideId: duplicated.slideId });
       }
@@ -172,7 +181,7 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
         const name = validateSlideName(body.name);
         if (!name) return json(res, 400, { error: 'invalid name' });
 
-        const entry = resolveSlideEntry(ctx.slidesRoot, slideId);
+        const entry = resolveContentEntryPath(ctx, slideId, kind);
         if (!entry) return json(res, 400, { error: 'invalid slideId' });
 
         let source: string;
@@ -203,12 +212,14 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
         if (!requestCheck.ok) {
           return json(res, requestCheck.status, { error: requestCheck.error });
         }
-        const removed = await rmSlideDir(ctx.slidesRoot, slideId);
+        const removed = await rmSlideDir(root, slideId);
         if (!removed) return json(res, 404, { error: 'slide not found' });
 
-        const manifest = await readManifest(ctx.manifestPath);
-        delete manifest.assignments[slideId];
-        await writeManifest(ctx.manifestPath, manifest);
+        if (kind === 'slide') {
+          const manifest = await readManifest(ctx.manifestPath);
+          delete manifest.assignments[slideId];
+          await writeManifest(ctx.manifestPath, manifest);
+        }
         return json(res, 200, { ok: true });
       }
 

@@ -13,6 +13,7 @@ import {
   RectangleHorizontal,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import type { ContentKind } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
 import { type CommandGroupSpec, CommandMenu, type CommandSpec } from './command-menu';
 
@@ -38,6 +39,7 @@ export function SlideCommandMenu({
   currentIndex,
   exporting,
   handlers,
+  kind = 'slide',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,9 +47,11 @@ export function SlideCommandMenu({
   currentIndex: number;
   exporting: boolean;
   handlers: SlideCommandHandlers;
+  kind?: ContentKind;
 }) {
   const t = useLocale();
   const navigate = useNavigate();
+  const isDocument = kind === 'document';
 
   const groups: CommandGroupSpec[] = (() => {
     const present: CommandSpec[] = [
@@ -67,14 +71,18 @@ export function SlideCommandMenu({
         shortcut: '↵',
         run: handlers.onPresentWindow,
       },
-      {
-        id: 'present-presenter',
-        label: t.slide.presentPresenter,
-        icon: <MonitorSpeaker />,
-        keywords: ['presenter', 'notes', 'speaker'],
-        shortcut: 'P',
-        run: handlers.onPresenterView,
-      },
+      ...(!isDocument
+        ? [
+            {
+              id: 'present-presenter',
+              label: t.slide.presentPresenter,
+              icon: <MonitorSpeaker />,
+              keywords: ['presenter', 'notes', 'speaker'],
+              shortcut: 'P',
+              run: handlers.onPresenterView,
+            },
+          ]
+        : []),
     ];
 
     const deck: CommandSpec[] = [
@@ -107,10 +115,10 @@ export function SlideCommandMenu({
     if (showSlideBrowser) {
       deck.push({
         id: 'back-to-slides',
-        label: t.commandMenu.backToSlides,
+        label: isDocument ? 'Back to documents' : t.commandMenu.backToSlides,
         icon: <ChevronLeft />,
         keywords: ['home', 'back', 'slides'],
-        run: () => navigate('/'),
+        run: () => navigate(isDocument ? '/documents' : '/'),
       });
     }
 
@@ -132,14 +140,18 @@ export function SlideCommandMenu({
             disabled: exporting,
             run: handlers.onExportPdf,
           },
-          {
-            id: 'export-image-pptx',
-            label: t.slide.exportAsImagePptx,
-            icon: <FileImage />,
-            keywords: ['export', 'pptx', 'powerpoint', 'download'],
-            disabled: exporting,
-            run: handlers.onExportImagePptx,
-          },
+          ...(!isDocument
+            ? [
+                {
+                  id: 'export-image-pptx',
+                  label: t.slide.exportAsImagePptx,
+                  icon: <FileImage />,
+                  keywords: ['export', 'pptx', 'powerpoint', 'download'],
+                  disabled: exporting,
+                  run: handlers.onExportImagePptx,
+                },
+              ]
+            : []),
         ]
       : [];
 

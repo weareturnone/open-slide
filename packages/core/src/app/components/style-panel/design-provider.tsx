@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { useHistory } from '@/components/history-provider';
 import { type DesignSystem, defaultDesign, designToCssVars } from '../../lib/design';
 import { shuffleDesign } from '../../lib/design-presets';
+import type { ContentKind } from '../../lib/sdk';
 import { useDesign as useDesignFetch } from './use-design';
 
 type DesignCtx = {
@@ -42,8 +43,16 @@ function clone<T>(d: T): T {
   return JSON.parse(JSON.stringify(d)) as T;
 }
 
-export function DesignProvider({ slideId, children }: { slideId: string; children: ReactNode }) {
-  const { design, exists, warning, loaded, save } = useDesignFetch(slideId);
+export function DesignProvider({
+  slideId,
+  children,
+  kind = 'slide',
+}: {
+  slideId: string;
+  children: ReactNode;
+  kind?: ContentKind;
+}) {
+  const { design, exists, warning, loaded, save } = useDesignFetch(slideId, kind);
   const [draft, setDraft] = useState<DesignSystem | null>(null);
   const [committing, setCommitting] = useState(false);
   const history = useHistory();
@@ -80,7 +89,11 @@ export function DesignProvider({ slideId, children }: { slideId: string; childre
     setCommitting(true);
     const r = await save(draft);
     setCommitting(false);
-    if (!r.ok) toast.error(r.error ?? 'Failed to save');
+    if (!r.ok) {
+      const message = r.error ?? 'Failed to save';
+      toast.error(message);
+      throw new Error(message);
+    }
     history.clear();
   }, [draft, save, history]);
 

@@ -11,8 +11,6 @@ import type { SlideTransition } from '../lib/transition';
 import { SlideCanvas } from './slide-canvas';
 
 const THUMB_W = 320;
-const THUMB_H = (THUMB_W * CANVAS_HEIGHT) / CANVAS_WIDTH;
-
 export type OverviewVariant = 'present' | 'editor';
 
 type Props = {
@@ -25,6 +23,8 @@ type Props = {
   variant?: OverviewVariant;
   moduleTransition?: SlideTransition;
   tooltipContainer?: HTMLElement | null;
+  canvasWidth?: number;
+  canvasHeight?: number;
 };
 
 export function OverviewGrid({
@@ -37,6 +37,8 @@ export function OverviewGrid({
   variant = 'present',
   moduleTransition,
   tooltipContainer,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
 }: Props) {
   const [focused, setFocused] = useState(current);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -160,6 +162,8 @@ export function OverviewGrid({
                   styles={styles}
                   moduleTransition={moduleTransition}
                   tooltipContainer={tooltipContainer}
+                  canvasWidth={canvasWidth}
+                  canvasHeight={canvasHeight}
                   onFocus={() => setFocused(i)}
                   onSelect={() => {
                     onSelect(i);
@@ -188,6 +192,8 @@ function OverviewThumb({
   onFocus,
   onSelect,
   buttonRef,
+  canvasWidth,
+  canvasHeight,
 }: {
   page: Page;
   index: number;
@@ -201,6 +207,8 @@ function OverviewThumb({
   onFocus: () => void;
   onSelect: () => void;
   buttonRef?: Ref<HTMLButtonElement>;
+  canvasWidth: number;
+  canvasHeight: number;
 }) {
   const t = useLocale();
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -233,14 +241,16 @@ function OverviewThumb({
           styles.thumbSurface,
           isFocused ? 'ring-2 ring-[var(--brand,#e5484d)]' : styles.thumbRing,
         )}
-        style={{ height: THUMB_H }}
+        style={{ height: (THUMB_W * canvasHeight) / canvasWidth }}
       >
         <SlideCanvas
-          scale={THUMB_W / CANVAS_WIDTH}
+          scale={THUMB_W / canvasWidth}
           center={false}
           flat
           freezeMotion
           design={design}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
         >
           <SlidePageProvider index={index} total={total}>
             <PageComp />
