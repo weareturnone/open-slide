@@ -1,6 +1,6 @@
 import buildManifest from 'virtual:open-slide/folders';
 import { useCallback, useEffect, useState } from 'react';
-import { useHostedOperation } from '@/components/hosted-operation-provider';
+import type { RunStructuralMutation } from '@/components/hosted-operation-provider';
 import { notifyAuthoringChanged } from './authoring';
 import { deployedStudioUrl } from './hosted-deployment';
 import type { ContentKind, Folder, FolderIcon, FoldersManifest } from './sdk';
@@ -122,11 +122,9 @@ export type UseFoldersResult = {
   refresh: () => Promise<void>;
 };
 
-export function useFolders(): UseFoldersResult {
+export function useFolders(runStructuralMutation: RunStructuralMutation): UseFoldersResult {
   const [manifest, setManifest] = useState<FoldersManifest>(EMPTY);
   const [loading, setLoading] = useState(true);
-  const { runStructuralMutation } = useHostedOperation();
-
   const refresh = useCallback(async () => {
     const m = await getManifest();
     setManifest(m);

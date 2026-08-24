@@ -78,6 +78,8 @@ type HostedOperationContextValue = {
   dismiss: () => void;
 };
 
+export type RunStructuralMutation = HostedOperationContextValue['runStructuralMutation'];
+
 const STORAGE_KEY = 'open-slide:hosted-operation:v1';
 const publishConfig = config.authoring?.publish;
 

@@ -123,7 +123,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       if (linkCopiedTimerRef.current) clearTimeout(linkCopiedTimerRef.current);
     };
   }, []);
-  const { renameSlide } = useFolders();
+  const { renameSlide } = useFolders(runStructuralMutation);
   const slideViewportRef = useRef<HTMLElement>(null);
   const t = useLocale();
   const isMobile = useIsMobile();

@@ -2,7 +2,10 @@ import { Menu } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { HostedOperationStatusBar } from '@/components/hosted-operation-provider';
+import {
+  HostedOperationStatusBar,
+  useHostedOperation,
+} from '@/components/hosted-operation-provider';
 import { LanguageToggle } from '@/components/language-toggle';
 import { ThemeToggle } from '@/components/theme-toggle';
 import {
@@ -54,6 +57,7 @@ function pathToSelectedId(pathname: string, search: URLSearchParams): string {
 }
 
 export function HomeShell() {
+  const { runStructuralMutation } = useHostedOperation();
   const {
     manifest,
     loading,
@@ -65,7 +69,7 @@ export function HomeShell() {
     renameSlide,
     duplicateSlide,
     deleteSlide,
-  } = useFolders();
+  } = useFolders(runStructuralMutation);
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
