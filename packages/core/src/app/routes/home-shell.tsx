@@ -2,6 +2,10 @@ import { Menu } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import {
+  HostedOperationStatusBar,
+  useHostedOperation,
+} from '@/components/hosted-operation-provider';
 import { LanguageToggle } from '@/components/language-toggle';
 import { ThemeToggle } from '@/components/theme-toggle';
 import {
@@ -11,15 +15,22 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAssets } from '@/lib/assets';
+import { authoringEnabled } from '@/lib/authoring';
 import { useFolders } from '@/lib/folders';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import { CommandMenuTrigger } from '../components/command/command-menu';
 import { HomeCommandMenu } from '../components/command/home-command-menu';
 import { FolderIconChip } from '../components/sidebar/folder-item';
-import { ALL_SLIDES_ID, ASSETS_ID, Sidebar, THEMES_ID } from '../components/sidebar/sidebar';
-import type { FoldersManifest } from '../lib/sdk';
-import { slideIds } from '../lib/slides';
+import {
+  ALL_SLIDES_ID,
+  ASSETS_ID,
+  DOCUMENTS_ID,
+  Sidebar,
+  THEMES_ID,
+} from '../components/sidebar/sidebar';
+import type { ContentKind, FoldersManifest } from '../lib/sdk';
+import { documentIds, slideIds } from '../lib/slides';
 import { themes as themeRegistry } from '../lib/themes';
 
 export type HomeOutletContext = {
@@ -33,18 +44,20 @@ export type HomeOutletContext = {
   reportTitle: (slideId: string, title: string) => void;
   titleMap: Record<string, string>;
   assign: (slideId: string, folderId: string | null) => Promise<void>;
-  renameSlide: (slideId: string, name: string) => Promise<void>;
-  duplicateSlide: (slideId: string, newId?: string) => Promise<string>;
-  deleteSlide: (slideId: string) => Promise<void>;
+  renameSlide: (slideId: string, name: string, kind?: ContentKind) => Promise<void>;
+  duplicateSlide: (slideId: string, newId?: string, kind?: ContentKind) => Promise<string>;
+  deleteSlide: (slideId: string, kind?: ContentKind) => Promise<void>;
 };
 
 function pathToSelectedId(pathname: string, search: URLSearchParams): string {
   if (pathname === '/themes' || pathname.startsWith('/themes/')) return THEMES_ID;
   if (pathname === '/assets') return ASSETS_ID;
+  if (pathname === '/documents') return DOCUMENTS_ID;
   return search.get('f') ?? ALL_SLIDES_ID;
 }
 
 export function HomeShell() {
+  const { runStructuralMutation } = useHostedOperation();
   const {
     manifest,
     loading,
@@ -56,7 +69,7 @@ export function HomeShell() {
     renameSlide,
     duplicateSlide,
     deleteSlide,
-  } = useFolders();
+  } = useFolders(runStructuralMutation);
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -78,6 +91,7 @@ export function HomeShell() {
     (id: string) => {
       if (id === THEMES_ID) navigate('/themes', { replace: true });
       else if (id === ASSETS_ID) navigate('/assets', { replace: true });
+      else if (id === DOCUMENTS_ID || id === 'documents') navigate('/documents', { replace: true });
       else if (id === ALL_SLIDES_ID) navigate('/', { replace: true });
       else navigate(`/?f=${encodeURIComponent(id)}`, { replace: true });
     },
@@ -146,6 +160,7 @@ export function HomeShell() {
           folders={manifest.folders}
           countFor={countFor}
           allCount={slideIds.length}
+          documentsCount={documentIds.length}
           themesCount={themeRegistry.length}
           assetsCount={globalAssets.length}
           selectedId={selectedId}
@@ -201,12 +216,21 @@ export function HomeShell() {
                   className={cn(
                     selectedId !== THEMES_ID &&
                       selectedId !== ASSETS_ID &&
+                      selectedId !== DOCUMENTS_ID &&
                       'bg-muted text-foreground',
                   )}
                 >
                   <FolderIconChip icon={{ type: 'emoji', value: '🎞️' }} />
                   <span className="flex-1 truncate">{t.home.slides}</span>
                   <span className="folio">{slideIds.length.toString().padStart(2, '0')}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => selectFolder(DOCUMENTS_ID)}
+                  className={cn(selectedId === DOCUMENTS_ID && 'bg-muted text-foreground')}
+                >
+                  <FolderIconChip icon={{ type: 'emoji', value: '📄' }} />
+                  <span className="flex-1 truncate">Documents</span>
+                  <span className="folio">{documentIds.length.toString().padStart(2, '0')}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => selectFolder(THEMES_ID)}
@@ -216,7 +240,7 @@ export function HomeShell() {
                   <span className="flex-1 truncate">{t.home.themes}</span>
                   <span className="folio">{themeRegistry.length.toString().padStart(2, '0')}</span>
                 </DropdownMenuItem>
-                {import.meta.env.DEV && (
+                {authoringEnabled && (
                   <DropdownMenuItem
                     onClick={() => selectFolder(ASSETS_ID)}
                     className={cn(selectedId === ASSETS_ID && 'bg-muted text-foreground')}
@@ -230,6 +254,8 @@ export function HomeShell() {
             </DropdownMenu>
           </div>
         </div>
+
+        <HostedOperationStatusBar />
 
         <div
           className={cn(

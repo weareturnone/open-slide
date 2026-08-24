@@ -296,6 +296,7 @@ export type Locale = {
     sectionAria: string;
     eyebrow: string;
     scopeSlide: string;
+    scopeDocument: string;
     scopeGlobal: string;
     /** templates: "{count} file" / "{count} files" */
     fileCount: Plural;

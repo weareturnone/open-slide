@@ -24,6 +24,8 @@ test.describe('inspector editing', () => {
     createdSlides.push(slideId);
     await duplicateSlide(request, 'edit-target', slideId);
     await openSlide(page, slideId);
+    await page.waitForLoadState('networkidle');
+    await expect(editorCanvas(page)).toBeVisible();
   }
 
   test('selecting an element opens the panel with its tag and text', async ({ page, request }) => {
@@ -100,6 +102,7 @@ test.describe('inspector editing', () => {
     const panel = page.locator('aside[data-inspector-ui]');
     const bold = panel.getByRole('button', { name: 'Bold' });
     const italic = panel.getByRole('button', { name: 'Italic' });
+    await expect(panel).toBeVisible();
     await bold.click();
     await italic.click();
     await panel.getByRole('button', { name: 'center', exact: true }).click();

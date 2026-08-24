@@ -49,8 +49,8 @@ function resolved(id: string): string {
   return `\0${id}`;
 }
 
-async function findSlides(userCwd: string, slidesDir: string): Promise<string[]> {
-  const abs = path.resolve(userCwd, slidesDir);
+async function findContent(userCwd: string, contentDir: string): Promise<string[]> {
+  const abs = path.resolve(userCwd, contentDir);
   if (!existsSync(abs)) return [];
   const hits = await fg('*/index.{tsx,jsx,ts,js}', {
     cwd: abs,
@@ -124,6 +124,8 @@ export async function generateSlidesModule(
   files: string[],
   slidesRoot: string,
   isDev: boolean,
+  documentFiles: string[] = [],
+  documentsRoot: string = path.resolve(path.dirname(slidesRoot), 'documents'),
 ): Promise<{ code: string; ignored: string[] }> {
   const scanned = await Promise.all(
     files.map(async (abs) => {
@@ -141,6 +143,17 @@ export async function generateSlidesModule(
   const entries = scanned.filter((e) => SLIDE_ID_RE.test(e.id));
   const ignored = scanned.filter((e) => !SLIDE_ID_RE.test(e.id)).map((e) => e.id);
 
+  const scannedDocuments = await Promise.all(
+    documentFiles.map(async (abs) => {
+      const id = toId(abs, documentsRoot);
+      const importPath = isDev ? `@fs/${normalizePath(abs).replace(/^\/+/, '')}` : abs;
+      const meta = await readSlideMeta(abs);
+      return { id, importPath, createdAt: parseCreatedAtMs(meta.createdAt) };
+    }),
+  );
+  const documentEntries = scannedDocuments.filter((e) => SLIDE_ID_RE.test(e.id));
+  ignored.push(...scannedDocuments.filter((e) => !SLIDE_ID_RE.test(e.id)).map((e) => e.id));
+
   const ids = JSON.stringify(entries.map((e) => e.id).sort());
   const themesMap: Record<string, string> = {};
   const createdAtMap: Record<string, number> = {};
@@ -150,16 +163,32 @@ export async function generateSlidesModule(
   }
   const themesJson = JSON.stringify(themesMap);
   const createdAtJson = JSON.stringify(createdAtMap);
+  const documentIds = JSON.stringify(documentEntries.map((e) => e.id).sort());
+  const documentCreatedAtJson = JSON.stringify(
+    Object.fromEntries(
+      documentEntries
+        .filter((entry) => entry.createdAt !== null)
+        .map((entry) => [entry.id, entry.createdAt]),
+    ),
+  );
   const importTokens = JSON.stringify(Object.fromEntries(entries.map((e) => [e.id, 0])));
+  const documentImportTokens = JSON.stringify(
+    Object.fromEntries(documentEntries.map((entry) => [entry.id, 0])),
+  );
   const devRuntime = isDev
     ? `
 const slideImportTokens = ${importTokens};
+const documentImportTokens = ${documentImportTokens};
 if (import.meta.hot) {
   import.meta.hot.on('open-slide:slide-changed', (data) => {
     const ids = Array.isArray(data?.slideIds) ? data.slideIds : data?.slideId ? [data.slideId] : [];
     const token = Date.now();
     for (const id of ids) {
       if (Object.prototype.hasOwnProperty.call(slideImportTokens, id)) slideImportTokens[id] = token;
+    }
+    const documentIds = Array.isArray(data?.documentIds) ? data.documentIds : data?.documentId ? [data.documentId] : [];
+    for (const id of documentIds) {
+      if (Object.prototype.hasOwnProperty.call(documentImportTokens, id)) documentImportTokens[id] = token;
     }
   });
 }
@@ -173,17 +202,34 @@ if (import.meta.hot) {
       return `    case ${JSON.stringify(e.id)}: return ${importExpr};`;
     })
     .join('\n');
+  const documentCases = documentEntries
+    .map((e) => {
+      const importExpr = isDev
+        ? `import(/* @vite-ignore */ import.meta.env.BASE_URL + ${JSON.stringify(`${e.importPath}?t=`)} + documentImportTokens[${JSON.stringify(e.id)}])`
+        : `import(${JSON.stringify(e.importPath)})`;
+      return `    case ${JSON.stringify(e.id)}: return ${importExpr};`;
+    })
+    .join('\n');
 
   const code = `// virtual:open-slide/slides — generated
 export const slideIds = ${ids};
+export const documentIds = ${documentIds};
 export const slideThemes = ${themesJson};
 export const slideCreatedAt = ${createdAtJson};
+export const documentCreatedAt = ${documentCreatedAtJson};
 ${devRuntime}
 
 export async function loadSlide(id) {
   switch (id) {
 ${cases}
     default: throw new Error('Slide not found: ' + id);
+  }
+}
+
+export async function loadDocument(id) {
+  switch (id) {
+${documentCases}
+    default: throw new Error('Document not found: ' + id);
   }
 }
 `;
@@ -193,33 +239,40 @@ ${cases}
 export function openSlidePlugin(opts: OpenSlidePluginOptions): Plugin {
   const { userCwd, config, coreVersion } = opts;
   const slidesDir = config.slidesDir ?? 'slides';
+  const documentsDir = config.documentsDir ?? 'documents';
   const slidesRoot = path.resolve(userCwd, slidesDir);
+  const documentsRoot = path.resolve(userCwd, documentsDir);
   const foldersManifestPath = path.join(slidesRoot, '.folders.json');
 
   let isDev = false;
-  const slideIdForEntry = (p: string): string | null => {
-    const rel = path.relative(slidesRoot, p);
+  const contentIdForEntry = (p: string): { id: string; kind: 'slide' | 'document' } | null => {
+    const root = p.startsWith(`${documentsRoot}${path.sep}`) ? documentsRoot : slidesRoot;
+    const kind = root === documentsRoot ? 'document' : 'slide';
+    const rel = path.relative(root, p);
     if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
     const parts = rel.split(path.sep);
     if (parts.length !== 2) return null;
     if (!/^index\.(tsx|jsx|ts|js)$/.test(parts[1])) return null;
-    return parts[0];
+    return { id: parts[0], kind };
   };
   let slideChangeTimer: ReturnType<typeof setTimeout> | null = null;
   const pendingSlideChanges = new Set<string>();
-  const queueSlideChanged = (server: ViteDevServer, id: string) => {
-    pendingSlideChanges.add(id);
+  const pendingDocumentChanges = new Set<string>();
+  const queueSlideChanged = (server: ViteDevServer, id: string, kind: 'slide' | 'document') => {
+    (kind === 'document' ? pendingDocumentChanges : pendingSlideChanges).add(id);
     if (slideChangeTimer) clearTimeout(slideChangeTimer);
     slideChangeTimer = setTimeout(() => {
       slideChangeTimer = null;
       const mod = server.moduleGraph.getModuleById(resolved(SLIDES_VMOD));
       if (mod) server.moduleGraph.invalidateModule(mod);
       const slideIds = Array.from(pendingSlideChanges);
+      const documentIds = Array.from(pendingDocumentChanges);
       pendingSlideChanges.clear();
+      pendingDocumentChanges.clear();
       server.ws.send({
         type: 'custom',
         event: 'open-slide:slide-changed',
-        data: { slideIds },
+        data: { slideIds, documentIds },
       });
     }, 100);
   };
@@ -240,8 +293,15 @@ export function openSlidePlugin(opts: OpenSlidePluginOptions): Plugin {
     },
     async load(id) {
       if (id === resolved(SLIDES_VMOD)) {
-        const files = await findSlides(userCwd, slidesDir);
-        const { code, ignored } = await generateSlidesModule(files, slidesRoot, isDev);
+        const files = await findContent(userCwd, slidesDir);
+        const documentFiles = await findContent(userCwd, documentsDir);
+        const { code, ignored } = await generateSlidesModule(
+          files,
+          slidesRoot,
+          isDev,
+          documentFiles,
+          documentsRoot,
+        );
         for (const slideId of ignored) {
           if (warnedInvalidSlideIds.has(slideId)) continue;
           warnedInvalidSlideIds.add(slideId);
@@ -270,19 +330,19 @@ export function openSlidePlugin(opts: OpenSlidePluginOptions): Plugin {
       return null;
     },
     handleHotUpdate(ctx) {
-      const slideId = slideIdForEntry(ctx.file);
-      if (!slideId) return;
+      const content = contentIdForEntry(ctx.file);
+      if (!content) return;
       // A speaker-note save writes the slide file itself. The notes plugin
       // records that write so we can recognise it here and skip the
       // `slide-changed` broadcast, which would otherwise bump the dev
       // cache-bust token and remount the slide canvas. Genuine source edits
       // are never recorded, so they keep full HMR behaviour.
       if (hasRecentWrite(ctx.file)) return [];
-      queueSlideChanged(ctx.server, slideId);
+      queueSlideChanged(ctx.server, content.id, content.kind);
       return [];
     },
     configureServer(server) {
-      const isSlideEntry = (p: string) => slideIdForEntry(p) !== null;
+      const isContentEntry = (p: string) => contentIdForEntry(p) !== null;
 
       let reloadTimer: ReturnType<typeof setTimeout> | null = null;
       const reload = () => {
@@ -299,11 +359,12 @@ export function openSlidePlugin(opts: OpenSlidePluginOptions): Plugin {
       // directory itself, since Vite sets `disableGlobbing: true` and would
       // otherwise treat a glob pattern as a literal path.
       if (existsSync(slidesRoot)) server.watcher.add(slidesRoot);
+      if (existsSync(documentsRoot)) server.watcher.add(documentsRoot);
       server.watcher.on('add', (p) => {
-        if (isSlideEntry(p)) reload();
+        if (isContentEntry(p)) reload();
       });
       server.watcher.on('unlink', (p) => {
-        if (isSlideEntry(p)) reload();
+        if (isContentEntry(p)) reload();
       });
 
       let foldersTimer: ReturnType<typeof setTimeout> | null = null;

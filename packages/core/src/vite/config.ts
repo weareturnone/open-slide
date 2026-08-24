@@ -45,9 +45,11 @@ export async function createViteConfig(opts: CreateViteConfigOptions): Promise<I
   const userCwd = path.resolve(opts.userCwd);
   const config = opts.config ?? (await loadUserConfig(userCwd));
   const slidesDir = config.slidesDir ?? 'slides';
+  const documentsDir = config.documentsDir ?? 'documents';
   const themesDir = config.themesDir ?? 'themes';
   const assetsDir = config.assetsDir ?? 'assets';
   const slidesAbs = path.resolve(userCwd, slidesDir);
+  const documentsAbs = path.resolve(userCwd, documentsDir);
   const themesAbs = path.resolve(userCwd, themesDir);
   const assetsAbs = path.resolve(userCwd, assetsDir);
 
@@ -57,13 +59,20 @@ export async function createViteConfig(opts: CreateViteConfigOptions): Promise<I
     configFile: false,
     envDir: userCwd,
     plugins: [
-      locTagsPlugin({ userCwd, slidesDir }),
+      locTagsPlugin({ userCwd, slidesDir, documentsDir }),
       react(),
       tailwindcss(),
       openSlidePlugin({ userCwd, config, coreVersion: CORE_VERSION }),
       themesPlugin({ userCwd, config }),
-      designPlugin({ userCwd }),
-      apiPlugin({ userCwd, slidesDir, assetsDir, coreVersion: CORE_VERSION }),
+      designPlugin({ userCwd, slidesDir, documentsDir }),
+      apiPlugin({
+        userCwd,
+        slidesDir,
+        documentsDir,
+        assetsDir,
+        coreVersion: CORE_VERSION,
+        catalogSourceModule: config.authoring?.catalog?.sourceModule,
+      }),
       notesPlugin({ userCwd, slidesDir }),
       currentPlugin({ userCwd, slidesDir }),
     ],
@@ -75,6 +84,10 @@ export async function createViteConfig(opts: CreateViteConfigOptions): Promise<I
     },
     optimizeDeps: {
       entries: [path.join(APP_ROOT, 'main.tsx')],
+      // Deck and document modules import the public package entry. Optimizing
+      // that entry creates a second copy of the app runtime beside APP_ROOT,
+      // which splits React contexts after Vite's discovery reload.
+      exclude: ['@open-slide/core'],
       include: [
         'react',
         'react-dom',
@@ -114,7 +127,7 @@ export async function createViteConfig(opts: CreateViteConfigOptions): Promise<I
     server: {
       port: config.port ?? 5173,
       ...(config.allowedHosts !== undefined ? { allowedHosts: config.allowedHosts } : {}),
-      fs: { allow: [APP_ROOT, userCwd, slidesAbs, themesAbs, assetsAbs] },
+      fs: { allow: [APP_ROOT, userCwd, slidesAbs, documentsAbs, themesAbs, assetsAbs] },
     },
     build: {
       outDir: path.resolve(userCwd, 'dist'),

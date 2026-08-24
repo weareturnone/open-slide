@@ -298,6 +298,7 @@ export const ja: Locale = {
     sectionAria: 'スライドのアセット',
     eyebrow: 'アセット',
     scopeSlide: 'このスライド',
+    scopeDocument: 'このドキュメント',
     scopeGlobal: 'グローバル',
     fileCount: { one: 'ファイル {count} 件', other: 'ファイル {count} 件' },
     createdAt: '作成日時',

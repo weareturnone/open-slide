@@ -36,6 +36,9 @@ export async function openSlide(page: Page, slideId: string, query = ''): Promis
   for (let attempt = 0; ; attempt++) {
     try {
       await expect(editorCanvas(page)).toBeVisible({ timeout: 15_000 });
+      // A file operation in the previous test can still have an HMR reload in
+      // flight. Do not send keys or fill fields until that reload settles.
+      await page.waitForLoadState('networkidle');
       return;
     } catch (err) {
       if (attempt >= 2) throw err;

@@ -12,8 +12,10 @@ import {
 import { toast } from 'sonner';
 import { useHistory } from '@/components/history-provider';
 import { Button } from '@/components/ui/button';
+import { authoringEnabled, authoringWritable, notifyAuthoringChanged } from '@/lib/authoring';
 import { type SlideComment, useComments } from '@/lib/inspector/use-comments';
 import { type Edit, type EditOp, type EditResult, useEditor } from '@/lib/inspector/use-editor';
+import type { ContentKind } from '@/lib/sdk';
 import { useLocale } from '@/lib/use-locale';
 import { AssetPickerDialog } from './asset-picker-dialog';
 import { ImageCropDialog, type ImageCropRect } from './image-crop-dialog';
@@ -247,6 +249,7 @@ type InspectorCtx = {
   toggle: () => void;
   cancel: () => void;
   comments: SlideComment[];
+  commentsEnabled: boolean;
   error: string | null;
   refetch: () => Promise<void>;
   add: (line: number, column: number, text: string) => Promise<void>;
@@ -279,15 +282,18 @@ export function InspectorProvider({
   slideId,
   pageIndex,
   children,
+  kind = 'slide',
 }: {
   slideId: string;
   pageIndex: number;
+  kind?: ContentKind;
   children: ReactNode;
 }) {
   const [active, setActive] = useState(false);
   const [selected, setSelected] = useState<SelectedTarget | null>(null);
-  const { comments, error, refetch, add, remove } = useComments(slideId);
-  const { applyEdit, applyEdits } = useEditor(slideId);
+  const commentsEnabled = kind === 'slide';
+  const { comments, error, refetch, add, remove } = useComments(slideId, commentsEnabled);
+  const { applyEdit, applyEdits } = useEditor(slideId, kind);
   const history = useHistory();
 
   const pendingRef = useRef<Map<string, Bucket>>(new Map());
@@ -749,6 +755,9 @@ export function InspectorProvider({
     setCommitting(true);
     try {
       const results = await applyEdits(pending.map((p) => p.edit));
+      if (results.some((result) => result.ok)) {
+        notifyAuthoringChanged();
+      }
       const failures: string[] = [];
       for (let i = 0; i < results.length; i++) {
         const item = pending[i];
@@ -771,7 +780,7 @@ export function InspectorProvider({
         }
       }
       refreshCount();
-      if (failures.length > 0) toast.error(`${t.inspector.saveFailed} ${failures.join('; ')}`);
+      if (failures.length > 0) throw new Error(failures.join('; '));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`${t.inspector.saveFailed} ${msg}`);
@@ -938,7 +947,7 @@ export function InspectorProvider({
   }, []);
 
   useEffect(() => {
-    if (import.meta.env.PROD) return;
+    if (!authoringWritable) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLElement && e.target.matches('input, textarea')) return;
       if (e.key !== 'i' && e.key !== 'I') return;
@@ -976,6 +985,7 @@ export function InspectorProvider({
       toggle,
       cancel,
       comments,
+      commentsEnabled,
       error,
       refetch,
       add,
@@ -998,6 +1008,7 @@ export function InspectorProvider({
       toggle,
       cancel,
       comments,
+      commentsEnabled,
       error,
       refetch,
       add,
@@ -1021,6 +1032,7 @@ export function InspectorProvider({
       {replaceTarget && (
         <AssetPickerDialog
           slideId={slideId}
+          kind={kind}
           onClose={() => setReplaceTarget(null)}
           onPick={(asset, scope) => {
             const { line, column, anchor } = replaceTarget;
@@ -1151,14 +1163,16 @@ function parsePercent(s: string, fallback: number): number {
 export function InspectToggleButton() {
   const t = useLocale();
   const { active, toggle } = useInspector();
-  if (import.meta.env.PROD) return null;
+  if (!authoringEnabled) return null;
   return (
     <Button
       size="sm"
       variant={active ? 'default' : 'ghost'}
       onClick={toggle}
+      disabled={!authoringWritable}
+      aria-disabled={!authoringWritable}
       data-inspector-ui
-      title={t.inspector.inspect}
+      title={authoringWritable ? t.inspector.inspect : 'Read-only preview'}
     >
       <Crosshair className="size-3.5" />
       <span className="hidden md:inline">{t.inspector.inspect}</span>

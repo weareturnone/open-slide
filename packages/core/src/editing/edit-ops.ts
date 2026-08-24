@@ -13,11 +13,18 @@ export type EditOp =
       prevText?: string;
     }
   | { kind: 'set-attr-asset'; attr: string; assetPath: string }
-  | { kind: 'replace-placeholder-with-image'; assetPath: string };
+  | { kind: 'replace-placeholder-with-image'; assetPath: string }
+  | { kind: 'delete-element' };
+
+export type SourceEdit = { line: number; column: number; ops: EditOp[] };
 
 export type ApplyEditResult =
   | { ok: true; source: string }
   | { ok: false; status: number; error: string };
+
+export type ApplyEditBatchResult =
+  | { ok: true; source: string }
+  | { ok: false; status: number; error: string; editIndex: number };
 
 export type Splice = { from: number; to: number; text: string };
 
@@ -1104,6 +1111,56 @@ export function planAssetImport(
   return { identifier, importSplice: { from: insertAt, to: insertAt, text: prefix + importStmt } };
 }
 
+export type AssetDependency = {
+  symbol: string;
+  path: string;
+};
+
+export type ApplyAssetDependenciesResult =
+  | { ok: true; source: string; identifiers: Record<string, string> }
+  | { ok: false; error: string };
+
+/**
+ * Resolve a trusted catalog fragment's private asset symbols and insert all
+ * required imports as one in-memory transform. Callers write only the final
+ * source, so a bad dependency cannot leave a partial import behind.
+ */
+export function applyAssetDependenciesInSource(
+  source: string,
+  dependencies: readonly AssetDependency[],
+): ApplyAssetDependenciesResult {
+  const symbols = new Set<string>();
+  for (const dependency of dependencies) {
+    if (!/^__[A-Z][A-Z0-9_]*__$/.test(dependency.symbol)) {
+      return { ok: false, error: 'asset dependency symbol is invalid' };
+    }
+    if (!dependency.path.startsWith('@assets/') || dependency.path.includes('..')) {
+      return { ok: false, error: 'catalog asset dependencies must use a trusted @assets path' };
+    }
+    if (symbols.has(dependency.symbol)) {
+      return { ok: false, error: 'asset dependency symbols must be unique' };
+    }
+    symbols.add(dependency.symbol);
+  }
+
+  let next = source;
+  const identifiers: Record<string, string> = {};
+  for (const dependency of dependencies) {
+    const ast = parseSource(next);
+    if (!ast) return { ok: false, error: 'source could not be parsed for asset imports' };
+    const plan = planAssetImport(ast, dependency.path);
+    identifiers[dependency.symbol] = plan.identifier;
+    if (plan.importSplice) {
+      next = `${next.slice(0, plan.importSplice.from)}${plan.importSplice.text}${next.slice(plan.importSplice.to)}`;
+    }
+  }
+
+  for (const dependency of dependencies) {
+    next = next.split(dependency.symbol).join(identifiers[dependency.symbol]);
+  }
+  return { ok: true, source: next, identifiers };
+}
+
 function planAssetAttr(
   ast: t.File,
   element: t.JSXElement,
@@ -1174,6 +1231,33 @@ export function applyEdit(
   if (!ast) return { ok: false, status: 422, error: 'could not parse source' };
   const element = findElementForEdit(ast, line, column, ops);
   if (!element) return { ok: false, status: 422, error: 'no JSX element at location' };
+
+  const deleteOps = ops.filter((op) => op.kind === 'delete-element');
+  if (deleteOps.length > 0) {
+    if (ops.length !== 1) {
+      return { ok: false, status: 422, error: 'delete-element must be the only operation' };
+    }
+    let directJsxParent = false;
+    walkJsx(ast, (node) => {
+      if (!t.isJSXElement(node) && !t.isJSXFragment(node)) return;
+      if (node.children.includes(element)) {
+        directJsxParent = true;
+        return 'stop';
+      }
+    });
+    if (!directJsxParent) {
+      return {
+        ok: false,
+        status: 422,
+        error: 'only directly authored child elements can be deleted safely',
+      };
+    }
+    const next = source.slice(0, element.start ?? 0) + source.slice(element.end ?? 0);
+    if (!parseSource(next)) {
+      return { ok: false, status: 422, error: 'delete would produce invalid source' };
+    }
+    return { ok: true, source: next };
+  }
 
   const splices: Splice[] = [];
 
@@ -1262,6 +1346,24 @@ export function applyEdit(
   }
   if (!parseSource(next)) {
     return { ok: false, status: 422, error: 'edit would produce invalid source' };
+  }
+  return { ok: true, source: next };
+}
+
+/**
+ * Apply a batch as one source transaction. Edits run from the bottom of the
+ * file upward so earlier splices cannot invalidate later source locators. Any
+ * failure returns the original source to the caller.
+ */
+export function applyEditBatch(source: string, edits: SourceEdit[]): ApplyEditBatchResult {
+  const ordered = edits
+    .map((edit, editIndex) => ({ edit, editIndex }))
+    .sort((a, b) => b.edit.line - a.edit.line || b.edit.column - a.edit.column);
+  let next = source;
+  for (const { edit, editIndex } of ordered) {
+    const result = applyEdit(next, edit.line, edit.column, edit.ops);
+    if (!result.ok) return { ...result, editIndex };
+    next = result.source;
   }
   return { ok: true, source: next };
 }

@@ -7,9 +7,10 @@ type Props = {
   /** Portal target — pass the player root so the dialog renders inside
    *  the fullscreen subtree (otherwise it paints invisibly under it). */
   container?: HTMLElement | null;
+  showPresenter?: boolean;
 };
 
-export function PresentHelpOverlay({ open, onOpenChange, container }: Props) {
+export function PresentHelpOverlay({ open, onOpenChange, container, showPresenter = true }: Props) {
   const t = useLocale();
   const shortcuts: Array<{ keys: string[]; label: string }> = [
     { keys: ['→', '↓', 'Space', 'PgDn'], label: t.present.shortcutNext },
@@ -20,7 +21,7 @@ export function PresentHelpOverlay({ open, onOpenChange, container }: Props) {
     { keys: ['B'], label: t.present.shortcutBlack },
     { keys: ['W'], label: t.present.shortcutWhite },
     { keys: ['L'], label: t.present.shortcutLaser },
-    { keys: ['P'], label: t.present.shortcutPresenter },
+    ...(showPresenter ? [{ keys: ['P'], label: t.present.shortcutPresenter }] : []),
     { keys: ['?', 'H'], label: t.present.shortcutToggleHelp },
     { keys: ['Esc'], label: t.present.shortcutCloseExit },
   ];

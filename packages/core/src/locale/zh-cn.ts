@@ -294,6 +294,7 @@ export const zhCN: Locale = {
     sectionAria: '幻灯片素材',
     eyebrow: '素材',
     scopeSlide: '当前幻灯片',
+    scopeDocument: '当前文档',
     scopeGlobal: '全局',
     fileCount: { one: '{count} 个文件', other: '{count} 个文件' },
     createdAt: '创建时间',

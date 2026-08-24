@@ -20,7 +20,13 @@ import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AssetView } from '@/components/asset-view';
+import { CatalogInsertDialog } from '@/components/catalog-insert-dialog';
 import { HistoryProvider } from '@/components/history-provider';
+import {
+  HostedOperationStatusBar,
+  useHostedOperation,
+} from '@/components/hosted-operation-provider';
+import { HostedPublishButton } from '@/components/hosted-publish-button';
 import { CommentWidget } from '@/components/inspector/comment-widget';
 import { InspectOverlay } from '@/components/inspector/inspect-overlay';
 import { InspectorPanel } from '@/components/inspector/inspector-panel';
@@ -60,11 +66,18 @@ import { SlideCanvas } from '../components/slide-canvas';
 import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/slide-preload-layer';
 import { SlideTransitionLayer } from '../components/slide-transition-layer';
 import { type ThumbnailActions, ThumbnailRail } from '../components/thumbnail-rail';
+import {
+  authoringEnabled,
+  authoringWritable,
+  notifyAuthoringChanged,
+  pageComponentIdentities,
+} from '../lib/authoring';
 import { exportSlideAsHtml } from '../lib/export-html';
 import { exportSlideAsPdf, isSafari } from '../lib/export-pdf';
 import { exportSlideAsImagePptx } from '../lib/export-pptx';
+import { deployedStudioUrl } from '../lib/hosted-deployment';
 import { remapNotesSessionCacheAfterReorder } from '../lib/inspector/use-notes';
-import type { SlideModule } from '../lib/sdk';
+import { type ContentKind, canvasSizeFor, type SlideModule } from '../lib/sdk';
 import { usePrefersReducedMotion } from '../lib/use-prefers-reduced-motion';
 import { useSlideModule } from '../lib/use-slide-module';
 
@@ -72,11 +85,14 @@ const { showSlideUi, showSlideBrowser, allowHtmlDownload } = config.build;
 
 const noop = () => {};
 
-export function Slide() {
+export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
   const { slideId = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { slide, error } = useSlideModule(slideId);
+  const { slide, error } = useSlideModule(slideId, kind);
+  const isDocument = kind === 'document';
+  const warmKey = `${kind}:${slideId}`;
+  const kindQuery = isDocument ? '?kind=document' : '';
   const [playMode, setPlayMode] = useState<'window' | 'fullscreen' | null>(null);
   // Last deck the Player showed. During a presenter-driven deck switch the
   // route's slideId changes while the new module loads and warms; rendering
@@ -94,29 +110,33 @@ export function Slide() {
   const [designOpen, setDesignOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [catalogInsertIndex, setCatalogInsertIndex] = useState<number | null>(null);
+  const { runStructuralMutation, structuralLocked } = useHostedOperation();
   const [, setWarmedTick] = useState(0);
   const handleAssetsWarmed = useCallback(() => {
-    markDeckWarmed(slideId);
+    markDeckWarmed(warmKey);
     setWarmedTick((n) => n + 1);
-  }, [slideId]);
+  }, [warmKey]);
 
   useEffect(() => {
     return () => {
       if (linkCopiedTimerRef.current) clearTimeout(linkCopiedTimerRef.current);
     };
   }, []);
-  const { renameSlide } = useFolders();
+  const { renameSlide } = useFolders(runStructuralMutation);
   const slideViewportRef = useRef<HTMLElement>(null);
   const t = useLocale();
   const isMobile = useIsMobile();
   const prefersReducedMotion = usePrefersReducedMotion();
 
   const modulePages = useMemo(() => slide?.default ?? [], [slide]);
+  const canvas = canvasSizeFor(slide);
   const [pages, setPages] = useState<typeof modulePages>(modulePages);
   useEffect(() => {
     setPages(modulePages);
   }, [modulePages]);
   const pageCount = pages.length;
+  const componentIds = useMemo(() => pageComponentIdentities(pages), [pages]);
   const rawIndex = Number(searchParams.get('p') ?? '1') - 1;
   const index = Number.isFinite(rawIndex) ? Math.max(0, Math.min(pageCount - 1, rawIndex)) : 0;
   const view = searchParams.get('view') === 'assets' ? 'assets' : 'slides';
@@ -178,15 +198,45 @@ export function Slide() {
       if (nextIndex !== index) goTo(nextIndex);
 
       try {
-        const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/reorder`, {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ order }),
-        });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(detail.error ?? `HTTP ${res.status}`);
+        if (!componentIds) throw new Error('Page component identities are unavailable');
+        const orderedComponentIds = order.map((position) => componentIds[position]);
+        if (import.meta.env.DEV) {
+          const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              order,
+              componentIds: orderedComponentIds,
+              focusIndex: nextIndex,
+            }),
+          });
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(detail.error ?? `HTTP ${res.status}`);
+          }
+          notifyAuthoringChanged();
+          return;
         }
+        const hosted = await runStructuralMutation<Record<string, unknown>>({
+          label: `Reorder ${isDocument ? 'pages' : 'slides'}`,
+          endpoint: `/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`,
+          method: 'PUT',
+          body: { order, componentIds: orderedComponentIds, focusIndex: nextIndex },
+          destination: () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('p', String(nextIndex + 1));
+            return url;
+          },
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? nextIndex) + 1));
+        window.location.assign(
+          deployedStudioUrl(
+            url,
+            hosted.status.operation.targetMainSha,
+            hosted.status.operation.operationId,
+          ),
+        );
       } catch (err) {
         setPages(before);
         const inverse = order.map((_, i) => order.indexOf(i));
@@ -194,7 +244,7 @@ export function Slide() {
         toast.error(`Reorder failed: ${String((err as Error).message ?? err)}`);
       }
     },
-    [pages, index, slideId, goTo],
+    [pages, index, slideId, goTo, kindQuery, componentIds, runStructuralMutation, isDocument],
   );
 
   const duplicatePage = useCallback(
@@ -207,14 +257,40 @@ export function Slide() {
       if (index > i) goTo(index + 1);
 
       try {
-        const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/pages/${i}/duplicate`, {
-          method: 'POST',
-        });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(detail.error ?? `HTTP ${res.status}`);
+        if (!componentIds) throw new Error('Page component identities are unavailable');
+        if (import.meta.env.DEV) {
+          const res = await fetch(
+            `/__slides/${encodeURIComponent(slideId)}/pages/${i}/duplicate${kindQuery}`,
+            { method: 'POST' },
+          );
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(detail.error ?? `HTTP ${res.status}`);
+          }
+          notifyAuthoringChanged();
+          toast.success(format(t.thumbnailRail.toastDuplicated, { n: i + 1 }));
+          return;
         }
-        toast.success(format(t.thumbnailRail.toastDuplicated, { n: i + 1 }));
+        const hosted = await runStructuralMutation<Record<string, unknown>>({
+          label: `Duplicate ${isDocument ? 'page' : 'slide'}`,
+          endpoint: `/__slides/${encodeURIComponent(slideId)}/pages/${i}/duplicate${kindQuery}`,
+          method: 'POST',
+          body: { componentId: componentIds[i] },
+          destination: () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('p', String(i + 2));
+            return url;
+          },
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? i + 1) + 1));
+        window.location.assign(
+          deployedStudioUrl(
+            url,
+            hosted.status.operation.targetMainSha,
+            hosted.status.operation.operationId,
+          ),
+        );
       } catch (err) {
         setPages(before);
         toast.error(
@@ -222,7 +298,17 @@ export function Slide() {
         );
       }
     },
-    [pages, index, slideId, goTo, t.thumbnailRail],
+    [
+      pages,
+      index,
+      slideId,
+      goTo,
+      kindQuery,
+      t.thumbnailRail,
+      componentIds,
+      runStructuralMutation,
+      isDocument,
+    ],
   );
 
   const deletePage = useCallback(
@@ -237,14 +323,45 @@ export function Slide() {
       }
 
       try {
-        const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/pages/${i}`, {
-          method: 'DELETE',
-        });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(detail.error ?? `HTTP ${res.status}`);
+        if (!componentIds) throw new Error('Page component identities are unavailable');
+        if (import.meta.env.DEV) {
+          const res = await fetch(
+            `/__slides/${encodeURIComponent(slideId)}/pages/${i}${kindQuery}`,
+            {
+              method: 'DELETE',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ componentId: componentIds[i] }),
+            },
+          );
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(detail.error ?? `HTTP ${res.status}`);
+          }
+          notifyAuthoringChanged();
+          toast.success(format(t.thumbnailRail.toastDeleted, { n: i + 1 }));
+          return;
         }
-        toast.success(format(t.thumbnailRail.toastDeleted, { n: i + 1 }));
+        const focusIndex = Math.max(0, Math.min(i, nextPages.length - 1));
+        const hosted = await runStructuralMutation<Record<string, unknown>>({
+          label: `Delete ${isDocument ? 'page' : 'slide'}`,
+          endpoint: `/__slides/${encodeURIComponent(slideId)}/pages/${i}${kindQuery}`,
+          method: 'DELETE',
+          body: { componentId: componentIds[i] },
+          destination: () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('p', String(focusIndex + 1));
+            return url;
+          },
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? focusIndex) + 1));
+        window.location.assign(
+          deployedStudioUrl(
+            url,
+            hosted.status.operation.targetMainSha,
+            hosted.status.operation.operationId,
+          ),
+        );
       } catch (err) {
         setPages(before);
         toast.error(
@@ -252,18 +369,28 @@ export function Slide() {
         );
       }
     },
-    [pages, index, slideId, goTo, t.thumbnailRail],
+    [
+      pages,
+      index,
+      slideId,
+      goTo,
+      kindQuery,
+      t.thumbnailRail,
+      componentIds,
+      runStructuralMutation,
+      isDocument,
+    ],
   );
 
   const thumbnailActions = useMemo<ThumbnailActions | undefined>(
     () =>
-      import.meta.env.DEV
+      authoringWritable && !structuralLocked
         ? {
             onDuplicate: duplicatePage,
             onDelete: deletePage,
           }
         : undefined,
-    [duplicatePage, deletePage],
+    [duplicatePage, deletePage, structuralLocked],
   );
 
   useEffect(() => {
@@ -304,7 +431,7 @@ export function Slide() {
         setPlayMode('fullscreen');
       } else if (e.key === 'Enter') {
         setPlayMode('window');
-      } else if (e.key === 'p' || e.key === 'P') {
+      } else if (!isDocument && (e.key === 'p' || e.key === 'P')) {
         if (slideId) openPresenterWindow(slideId);
         setPlayMode('window');
       } else if (import.meta.env.DEV && (e.key === 'd' || e.key === 'D')) {
@@ -313,13 +440,16 @@ export function Slide() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [index, goTo, playMode, slideId, overviewOpen]);
+  }, [index, goTo, playMode, slideId, overviewOpen, isDocument]);
 
   if (error) {
     return (
       <div className="mx-auto max-w-3xl px-8 py-16 text-muted-foreground">
         {showSlideBrowser && (
-          <Link to="/" className="text-[12px] font-medium text-foreground/70 hover:text-foreground">
+          <Link
+            to={isDocument ? '/documents' : '/'}
+            className="text-[12px] font-medium text-foreground/70 hover:text-foreground"
+          >
             ← {t.common.home}
           </Link>
         )}
@@ -334,7 +464,7 @@ export function Slide() {
     );
   }
 
-  const presentReady = Boolean(slide) && pageCount > 0 && isDeckWarmed(slideId);
+  const presentReady = Boolean(slide) && pageCount > 0 && isDeckWarmed(warmKey);
   if (playMode && slide && presentReady) {
     lastPresentedRef.current = { slideId, slide, pages, index };
   }
@@ -357,8 +487,11 @@ export function Slide() {
           onExit={() => setPlayMode(null)}
           controls
           slideId={presented.slideId}
-          onSwitchSlide={switchPresentedSlide}
+          onSwitchSlide={isDocument ? undefined : switchPresentedSlide}
           fullscreen={playMode === 'fullscreen'}
+          canvasWidth={canvas.width}
+          canvasHeight={canvas.height}
+          kind={kind}
         />
         {!presentReady && slide && pageCount > 0 && (
           <SlidePreloadLayer
@@ -367,6 +500,8 @@ export function Slide() {
             design={slide.design}
             includeCurrent
             onDone={handleAssetsWarmed}
+            canvasWidth={canvas.width}
+            canvasHeight={canvas.height}
           />
         )}
       </>
@@ -396,7 +531,10 @@ export function Slide() {
     return (
       <div className="mx-auto max-w-3xl px-8 py-16 text-muted-foreground">
         {showSlideBrowser && (
-          <Link to="/" className="text-[12px] font-medium text-foreground/70 hover:text-foreground">
+          <Link
+            to={isDocument ? '/documents' : '/'}
+            className="text-[12px] font-medium text-foreground/70 hover:text-foreground"
+          >
             ← {t.common.home}
           </Link>
         )}
@@ -406,7 +544,7 @@ export function Slide() {
         </h2>
         <p className="mt-3 text-[13px] leading-relaxed">
           <code className="rounded-[4px] bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">
-            slides/{slideId}/index.tsx
+            {isDocument ? 'documents' : 'slides'}/{slideId}/index.tsx
           </code>
           {t.slide.emptyHintMust}
           <code className="rounded-[4px] bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">
@@ -420,7 +558,7 @@ export function Slide() {
 
   // Hold the loader while a hidden layer warms the whole deck's images and
   // fonts, so the slide UI first paints with every asset already in cache.
-  if (view !== 'assets' && !isDeckWarmed(slideId)) {
+  if (view !== 'assets' && !isDeckWarmed(warmKey)) {
     return (
       <div className="grid min-h-dvh place-items-center px-8 text-muted-foreground">
         <div className="flex flex-col items-center gap-4">
@@ -441,6 +579,8 @@ export function Slide() {
           design={slide.design}
           includeCurrent
           onDone={handleAssetsWarmed}
+          canvasWidth={canvas.width}
+          canvasHeight={canvas.height}
         />
       </div>
     );
@@ -456,6 +596,9 @@ export function Slide() {
         onIndexChange={goTo}
         onExit={() => {}}
         allowExit={false}
+        canvasWidth={canvas.width}
+        canvasHeight={canvas.height}
+        kind={kind}
       />
     );
   }
@@ -551,43 +694,47 @@ export function Slide() {
         <FileText />
         {t.slide.exportAsPdf}
       </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem disabled={exporting} onClick={exportImagePptx}>
-        <FileImage />
-        {t.slide.exportAsImagePptx}
-      </DropdownMenuItem>
-      <TooltipProvider delay={200}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div
-                aria-disabled
-                className="relative flex cursor-help items-center justify-between gap-2 rounded-[5px] px-2 py-1.5 text-[12.5px] opacity-45 select-none [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:opacity-80"
+      {!isDocument && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled={exporting} onClick={exportImagePptx}>
+            <FileImage />
+            {t.slide.exportAsImagePptx}
+          </DropdownMenuItem>
+          <TooltipProvider delay={200}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    aria-disabled
+                    className="relative flex cursor-help items-center justify-between gap-2 rounded-[5px] px-2 py-1.5 text-[12.5px] opacity-45 select-none [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:opacity-80"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Presentation />
+                      {t.slide.exportAsPptx}
+                    </span>
+                    <span className="rounded-[3px] bg-muted px-1.5 py-0.5 font-mono text-[9.5px] tracking-[0.04em] text-muted-foreground">
+                      {t.slide.comingSoon}
+                    </span>
+                  </div>
+                }
+              />
+              <TooltipContent
+                side="left"
+                className="w-max max-w-[min(520px,calc(100vw-2rem))] text-center leading-relaxed"
               >
-                <span className="flex items-center gap-2">
-                  <Presentation />
-                  {t.slide.exportAsPptx}
-                </span>
-                <span className="rounded-[3px] bg-muted px-1.5 py-0.5 font-mono text-[9.5px] tracking-[0.04em] text-muted-foreground">
-                  {t.slide.comingSoon}
-                </span>
-              </div>
-            }
-          />
-          <TooltipContent
-            side="left"
-            className="w-max max-w-[min(520px,calc(100vw-2rem))] text-center leading-relaxed"
-          >
-            {t.slide.pptxComingSoonTooltip}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+                {t.slide.pptxComingSoonTooltip}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </>
+      )}
     </>
   );
 
   return (
     <HistoryProvider>
-      <InspectorProvider slideId={slideId} pageIndex={index}>
+      <InspectorProvider slideId={slideId} pageIndex={index} kind={kind}>
         <SelectionReporter />
         <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
           {/* Editorial toolbar — three zones, hairline separators, mono-folio center */}
@@ -595,8 +742,8 @@ export function Slide() {
             <div className="flex flex-1 items-center gap-1.5 md:flex-none md:gap-2">
               {showSlideBrowser && (
                 <Link
-                  to="/"
-                  aria-label={t.slide.backToHome}
+                  to={isDocument ? '/documents' : '/'}
+                  aria-label={isDocument ? 'Back to documents' : t.slide.backToHome}
                   title={t.slide.home}
                   className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
                 >
@@ -604,7 +751,7 @@ export function Slide() {
                 </Link>
               )}
               <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-hairline md:block" />
-              {import.meta.env.DEV && (
+              {authoringEnabled && (
                 <Tabs
                   value={view}
                   onValueChange={(next) => {
@@ -620,7 +767,9 @@ export function Slide() {
                   }}
                 >
                   <TabsList>
-                    <TabsTrigger value="slides">{t.slide.slidesTab}</TabsTrigger>
+                    <TabsTrigger value="slides">
+                      {isDocument ? 'Pages' : t.slide.slidesTab}
+                    </TabsTrigger>
                     <TabsTrigger value="assets">{t.slide.assetsTab}</TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -633,11 +782,16 @@ export function Slide() {
                 and min-w-0 lets it truncate instead of overlapping the icons on narrow widths. */}
             <div className="pointer-events-none relative flex min-w-0 justify-center px-2 md:absolute md:inset-x-0">
               <div className="pointer-events-auto min-w-0 max-w-[34rem]">
-                <InlineTitleEditor title={title} onSubmit={(next) => renameSlide(slideId, next)} />
+                <InlineTitleEditor
+                  title={title}
+                  onSubmit={(next) => renameSlide(slideId, next, kind)}
+                  noun={isDocument ? 'document' : 'slide'}
+                />
               </div>
             </div>
 
             <div className="flex flex-1 items-center justify-end gap-1 md:ml-auto md:flex-none">
+              <HostedPublishButton />
               {view === 'slides' && (
                 <button
                   type="button"
@@ -720,10 +874,10 @@ export function Slide() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {view === 'slides' && (
+              {view === 'slides' && import.meta.env.DEV && (
                 <DesignToggleButton active={designOpen} onToggle={() => setDesignOpen((v) => !v)} />
               )}
-              {view === 'slides' && <InspectToggleButton />}
+              {view === 'slides' && !isMobile && <InspectToggleButton />}
               <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-hairline md:block" />
               {view === 'slides' && (
                 <div className="inline-flex items-stretch">
@@ -762,16 +916,18 @@ export function Slide() {
                         {t.slide.presentFullscreen}
                         <DropdownMenuShortcut>F</DropdownMenuShortcut>
                       </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          if (slideId) openPresenterWindow(slideId);
-                          setPlayMode('window');
-                        }}
-                      >
-                        <MonitorSpeaker />
-                        {t.slide.presentPresenter}
-                        <DropdownMenuShortcut>P</DropdownMenuShortcut>
-                      </DropdownMenuItem>
+                      {!isDocument && (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            if (slideId) openPresenterWindow(slideId);
+                            setPlayMode('window');
+                          }}
+                        >
+                          <MonitorSpeaker />
+                          {t.slide.presentPresenter}
+                          <DropdownMenuShortcut>P</DropdownMenuShortcut>
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -779,12 +935,14 @@ export function Slide() {
             </div>
           </header>
 
+          <HostedOperationStatusBar />
+
           {view === 'assets' ? (
             <div className="min-h-0 flex-1">
-              <AssetView slideId={slideId} />
+              <AssetView slideId={slideId} kind={kind} />
             </div>
           ) : (
-            <DesignProvider slideId={slideId}>
+            <DesignProvider slideId={slideId} kind={kind}>
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <div className="flex min-h-0 flex-1 flex-col md:flex-row">
                   <ResizableRail
@@ -792,15 +950,21 @@ export function Slide() {
                     design={slide.design}
                     current={index}
                     onSelect={goTo}
-                    onReorder={import.meta.env.DEV ? reorderPage : undefined}
+                    onReorder={authoringWritable && !structuralLocked ? reorderPage : undefined}
                     actions={thumbnailActions}
                     moduleTransition={slide.transition}
                     onOverview={() => setOverviewOpen(true)}
+                    onInsert={config.authoring?.catalog ? setCatalogInsertIndex : undefined}
+                    canvasWidth={canvas.width}
+                    canvasHeight={canvas.height}
+                    insertNoun={isDocument ? 'page' : 'slide'}
+                    overviewAriaLabel={isDocument ? 'Page overview (O)' : undefined}
                   />
                   <main
                     ref={slideViewportRef}
                     data-inspector-root
                     data-slide-id={slideId}
+                    data-content-kind={kind}
                     className="relative min-h-0 min-w-0 flex-1 bg-canvas p-2 md:p-10"
                   >
                     <SlideViewportNavigation
@@ -810,7 +974,11 @@ export function Slide() {
                       canPrev={index > 0}
                       canNext={index < pageCount - 1}
                     />
-                    <SlideCanvas design={slide.design}>
+                    <SlideCanvas
+                      design={slide.design}
+                      canvasWidth={canvas.width}
+                      canvasHeight={canvas.height}
+                    >
                       <SlideTransitionLayer
                         pages={pages}
                         index={index}
@@ -821,7 +989,7 @@ export function Slide() {
                     </SlideCanvas>
                     <InspectOverlay />
                     <SaveBar />
-                    {import.meta.env.DEV && <CommentWidget />}
+                    {import.meta.env.DEV && !isDocument && <CommentWidget />}
                   </main>
                   {/* Mobile-only horizontal rail. Sits below the canvas and
                     pads its bottom for the iOS home indicator / Safari URL bar. */}
@@ -836,12 +1004,14 @@ export function Slide() {
                       onSelect={goTo}
                       orientation="horizontal"
                       actions={thumbnailActions}
+                      canvasWidth={canvas.width}
+                      canvasHeight={canvas.height}
                     />
                   </div>
                   <InspectorPanel />
                   <DesignPanel open={designOpen} onClose={() => setDesignOpen(false)} />
                 </div>
-                {import.meta.env.DEV && (
+                {import.meta.env.DEV && !isDocument && (
                   <NotesDrawer
                     slideId={slideId}
                     index={index}
@@ -858,6 +1028,14 @@ export function Slide() {
                   onSelect={goTo}
                   variant="editor"
                   moduleTransition={slide.transition}
+                  canvasWidth={canvas.width}
+                  canvasHeight={canvas.height}
+                />
+                <CatalogInsertDialog
+                  slideId={slideId}
+                  index={catalogInsertIndex}
+                  onClose={() => setCatalogInsertIndex(null)}
+                  kind={kind}
                 />
               </div>
             </DesignProvider>
@@ -874,7 +1052,7 @@ export function Slide() {
                 onPresentWindow: () => setPlayMode('window'),
                 onPresentFullscreen: () => setPlayMode('fullscreen'),
                 onPresenterView: () => {
-                  if (slideId) openPresenterWindow(slideId);
+                  if (!isDocument && slideId) openPresenterWindow(slideId);
                   setPlayMode('window');
                 },
                 onCopyLink: copyLink,
@@ -885,6 +1063,7 @@ export function Slide() {
                 onExportImagePptx: exportImagePptx,
                 onGoToPage: goTo,
               }}
+              kind={kind}
             />
           )}
         </div>
@@ -915,6 +1094,11 @@ function ResizableRail(props: {
   actions?: ThumbnailActions;
   moduleTransition?: SlideModule['transition'];
   onOverview?: () => void;
+  onInsert?: (index: number) => void;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  insertNoun?: 'slide' | 'page';
+  overviewAriaLabel?: string;
 }) {
   const t = useLocale();
   const [width, setWidth] = useState<number>(readStoredRailWidth);
@@ -1117,9 +1301,11 @@ function SlideViewportNavigation({
 function InlineTitleEditor({
   title,
   onSubmit,
+  noun,
 }: {
   title: string;
   onSubmit: (name: string) => Promise<void> | void;
+  noun: 'slide' | 'document';
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -1198,7 +1384,7 @@ function InlineTitleEditor({
     );
   }
 
-  if (!import.meta.env.DEV) {
+  if (!authoringEnabled || !authoringWritable) {
     return (
       <div className="flex min-w-0 items-baseline justify-center">
         <h1 className="truncate font-heading text-[13.5px] font-semibold tracking-[-0.01em]">
@@ -1213,7 +1399,7 @@ function InlineTitleEditor({
       <button
         type="button"
         onClick={() => setEditing(true)}
-        aria-label={t.slide.renameSlide}
+        aria-label={noun === 'document' ? 'Rename document' : t.slide.renameSlide}
         className={cn(
           'min-w-0 max-w-full cursor-text rounded-[5px] border border-transparent px-2 py-0.5 transition-colors duration-100',
           'hover:border-foreground/30 hover:bg-card focus-visible:border-foreground/30 focus-visible:bg-card focus-visible:outline-none',

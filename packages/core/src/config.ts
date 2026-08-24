@@ -6,9 +6,34 @@ export type OpenSlideBuildConfig = {
   allowHtmlDownload?: boolean;
 };
 
+export type OpenSlideAuthoringConfig = {
+  /**
+   * Expose source-backed authoring controls in production builds. The host
+   * application must provide the existing /__edit, /__slides and /__assets
+   * HTTP contracts when this is enabled.
+   */
+  enabled?: boolean;
+  /** Keep authoring UI inspectable while every mutation remains disabled. */
+  readOnly?: boolean;
+  publish?: {
+    statusEndpoint: string;
+    publishEndpoint: string;
+  };
+  catalog?: {
+    listEndpoint: string;
+    insertEndpoint: string;
+    /** Workspace-relative module used by the local Vite authoring adapter. */
+    sourceModule?: string;
+  };
+  decks?: {
+    createEndpoint: string;
+  };
+};
+
 export type OpenSlideConfig = {
   base?: string;
   slidesDir?: string;
+  documentsDir?: string;
   themesDir?: string;
   assetsDir?: string;
   port?: number;
@@ -20,4 +45,5 @@ export type OpenSlideConfig = {
    */
   locale?: Locale;
   build?: OpenSlideBuildConfig;
+  authoring?: OpenSlideAuthoringConfig;
 };

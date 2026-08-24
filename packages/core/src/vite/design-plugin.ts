@@ -39,7 +39,7 @@ function findDesignDecl(ast: AstNode): DesignDeclLocation | null {
     const declarations = (varDecl as unknown as { declarations?: AstNode[] }).declarations ?? [];
     for (const d of declarations) {
       const id = (d as unknown as { id?: { type?: string; name?: string } }).id;
-      if (!id || id.type !== 'Identifier' || id.name !== 'design') continue;
+      if (id?.type !== 'Identifier' || id.name !== 'design') continue;
       const init = (d as unknown as { init?: AstNode | null }).init;
       if (!init) return null;
       let inner: AstNode = init;
@@ -214,7 +214,7 @@ function findDesignObjectNode(ast: AstNode): AstNode | null {
     const declarations = (varDecl as unknown as { declarations?: AstNode[] }).declarations ?? [];
     for (const d of declarations) {
       const id = (d as unknown as { id?: { type?: string; name?: string } }).id;
-      if (!id || id.type !== 'Identifier' || id.name !== 'design') continue;
+      if (id?.type !== 'Identifier' || id.name !== 'design') continue;
       const init = (d as unknown as { init?: AstNode | null }).init;
       if (!init) return null;
       let inner: AstNode = init;
@@ -330,11 +330,13 @@ export function applyDesignWrite(source: string, next: DesignSystem): WriteResul
 export type DesignPluginOptions = {
   userCwd: string;
   slidesDir?: string;
+  documentsDir?: string;
 };
 
 export function designPlugin(opts: DesignPluginOptions): Plugin {
   const userCwd = opts.userCwd;
   const slidesDir = opts.slidesDir ?? 'slides';
+  const documentsDir = opts.documentsDir ?? 'documents';
 
   return {
     name: 'open-slide:design',
@@ -344,7 +346,8 @@ export function designPlugin(opts: DesignPluginOptions): Plugin {
         const url = new URL(req.url ?? '/', 'http://local');
         const method = req.method ?? 'GET';
         const slideId = url.searchParams.get('slideId') ?? '';
-        const file = resolveSlidePath(userCwd, slidesDir, slideId);
+        const contentDir = url.searchParams.get('kind') === 'document' ? documentsDir : slidesDir;
+        const file = resolveSlidePath(userCwd, contentDir, slideId);
         if (!file) return json(res, 400, { error: 'invalid slideId' });
 
         try {

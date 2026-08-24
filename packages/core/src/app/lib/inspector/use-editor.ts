@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import type { ContentKind } from '../sdk';
 
 export type EditOp =
   | { kind: 'set-style'; key: string; value: string | null; prevText?: string }
@@ -12,7 +13,8 @@ export type EditOp =
       prevText?: string;
     }
   | { kind: 'set-attr-asset'; attr: string; assetPath: string; previewUrl: string }
-  | { kind: 'replace-placeholder-with-image'; assetPath: string };
+  | { kind: 'replace-placeholder-with-image'; assetPath: string }
+  | { kind: 'delete-element' };
 
 export type Edit = { line: number; column: number; ops: EditOp[] };
 
@@ -27,13 +29,13 @@ export class NoOpEditError extends Error {
   }
 }
 
-export function useEditor(slideId: string) {
+export function useEditor(slideId: string, kind: ContentKind = 'slide') {
   const applyEdit = useCallback(
     async (line: number, column: number, ops: EditOp[]) => {
       const res = await fetch('/__edit', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, line, column, ops }),
+        body: JSON.stringify({ slideId, kind, line, column, ops }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string; changed?: boolean };
       if (!res.ok) {
@@ -43,7 +45,7 @@ export function useEditor(slideId: string) {
         throw new NoOpEditError();
       }
     },
-    [slideId],
+    [slideId, kind],
   );
 
   // Batch many element edits into one file write and one HMR tick.
@@ -55,7 +57,7 @@ export function useEditor(slideId: string) {
       const res = await fetch('/__edit/batch', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, edits }),
+        body: JSON.stringify({ slideId, kind, edits }),
       });
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -66,7 +68,7 @@ export function useEditor(slideId: string) {
       }
       return body.results ?? [];
     },
-    [slideId],
+    [slideId, kind],
   );
 
   return { applyEdit, applyEdits };

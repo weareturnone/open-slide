@@ -1,6 +1,7 @@
 import { type CSSProperties, type HTMLAttributes, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { uploadWithAutoRename } from '@/lib/assets';
+import { authoringWritable } from '@/lib/authoring';
 import { useLocale } from '@/lib/use-locale';
 
 export type ImagePlaceholderProps = {
@@ -25,7 +26,7 @@ export function ImagePlaceholder({
   const dragDepth = useRef(0);
   const t = useLocale();
 
-  const dndProps = import.meta.env.DEV
+  const dndProps = authoringWritable
     ? {
         onDragEnter: (e: React.DragEvent<HTMLDivElement>) => {
           if (uploading || !hasImageFile(e)) return;
@@ -51,6 +52,10 @@ export function ImagePlaceholder({
           if (!file) return;
           const root = e.currentTarget;
           const slideId = root.closest<HTMLElement>('[data-slide-id]')?.dataset.slideId;
+          const kind =
+            root.closest<HTMLElement>('[data-content-kind]')?.dataset.contentKind === 'document'
+              ? 'document'
+              : 'slide';
           const loc = root.dataset.slideLoc;
           if (!slideId || !loc) return;
           const idx = loc.indexOf(':');
@@ -59,7 +64,7 @@ export function ImagePlaceholder({
           const column = Number(loc.slice(idx + 1));
           if (!Number.isFinite(line) || !Number.isFinite(column)) return;
           setUploading(true);
-          handleDrop(slideId, file, line, column)
+          handleDrop(slideId, file, line, column, kind)
             .catch(() => toast.error(t.imagePlaceholder.uploadFailed))
             .finally(() => setUploading(false));
         },
@@ -143,7 +148,7 @@ export function ImagePlaceholder({
           </span>
         )}
       </div>
-      {import.meta.env.DEV && (dragActive || uploading) && (
+      {authoringWritable && (dragActive || uploading) && (
         <DropOverlay
           label={uploading ? t.imagePlaceholder.uploading : t.imagePlaceholder.dropOverlay}
         />
@@ -203,14 +208,21 @@ function pickImageFile(files: FileList): File | null {
   return null;
 }
 
-async function handleDrop(slideId: string, file: File, line: number, column: number) {
-  const { ok, entry } = await uploadWithAutoRename(slideId, file);
+async function handleDrop(
+  slideId: string,
+  file: File,
+  line: number,
+  column: number,
+  kind: 'slide' | 'document',
+) {
+  const { ok, entry } = await uploadWithAutoRename(slideId, file, kind);
   if (!ok || !entry) throw new Error('upload failed');
   const res = await fetch('/__edit', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       slideId,
+      kind,
       line,
       column,
       ops: [{ kind: 'replace-placeholder-with-image', assetPath: `./assets/${entry.name}` }],

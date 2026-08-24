@@ -1,6 +1,9 @@
 import buildManifest from 'virtual:open-slide/folders';
 import { useCallback, useEffect, useState } from 'react';
-import type { Folder, FolderIcon, FoldersManifest } from './sdk';
+import type { RunStructuralMutation } from '@/components/hosted-operation-provider';
+import { notifyAuthoringChanged } from './authoring';
+import { deployedStudioUrl } from './hosted-deployment';
+import type { ContentKind, Folder, FolderIcon, FoldersManifest } from './sdk';
 
 const EMPTY: FoldersManifest = { folders: [], assignments: {} };
 
@@ -24,8 +27,12 @@ async function getManifest(): Promise<FoldersManifest> {
   };
 }
 
-async function patchSlideName(slideId: string, name: string): Promise<void> {
-  const res = await fetch(`/__slides/${slideId}`, {
+function kindQuery(kind: ContentKind): string {
+  return kind === 'document' ? '?kind=document' : '';
+}
+
+async function patchSlideName(slideId: string, name: string, kind: ContentKind): Promise<void> {
+  const res = await fetch(`/__slides/${slideId}${kindQuery(kind)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -33,21 +40,25 @@ async function patchSlideName(slideId: string, name: string): Promise<void> {
   if (!res.ok) throw new Error(`PATCH /__slides/${slideId} ${res.status}`);
 }
 
-async function duplicateSlideReq(slideId: string, newId?: string): Promise<string> {
+async function duplicateSlideReq(
+  slideId: string,
+  newId: string | undefined,
+  kind: ContentKind,
+): Promise<string> {
   const init: RequestInit = { method: 'POST' };
   if (newId !== undefined) {
     init.headers = { 'content-type': 'application/json' };
     init.body = JSON.stringify({ newId });
   }
-  const res = await fetch(`/__slides/${slideId}/duplicate`, init);
+  const res = await fetch(`/__slides/${slideId}/duplicate${kindQuery(kind)}`, init);
   if (!res.ok) throw new Error(`POST /__slides/${slideId}/duplicate ${res.status}`);
   const body = (await res.json()) as { slideId?: unknown };
   if (typeof body.slideId !== 'string') throw new Error('duplicate response missing slideId');
   return body.slideId;
 }
 
-async function deleteSlideReq(slideId: string): Promise<void> {
-  const res = await fetch(`/__slides/${slideId}`, { method: 'DELETE' });
+async function deleteSlideReq(slideId: string, kind: ContentKind): Promise<void> {
+  const res = await fetch(`/__slides/${slideId}${kindQuery(kind)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`DELETE /__slides/${slideId} ${res.status}`);
 }
 
@@ -105,16 +116,15 @@ export type UseFoldersResult = {
   remove: (id: string) => Promise<void>;
   reorder: (ids: string[]) => Promise<void>;
   assign: (slideId: string, folderId: string | null) => Promise<void>;
-  renameSlide: (slideId: string, name: string) => Promise<void>;
-  duplicateSlide: (slideId: string, newId?: string) => Promise<string>;
-  deleteSlide: (slideId: string) => Promise<void>;
+  renameSlide: (slideId: string, name: string, kind?: ContentKind) => Promise<void>;
+  duplicateSlide: (slideId: string, newId?: string, kind?: ContentKind) => Promise<string>;
+  deleteSlide: (slideId: string, kind?: ContentKind) => Promise<void>;
   refresh: () => Promise<void>;
 };
 
-export function useFolders(): UseFoldersResult {
+export function useFolders(runStructuralMutation: RunStructuralMutation): UseFoldersResult {
   const [manifest, setManifest] = useState<FoldersManifest>(EMPTY);
   const [loading, setLoading] = useState(true);
-
   const refresh = useCallback(async () => {
     const m = await getManifest();
     setManifest(m);
@@ -199,28 +209,87 @@ export function useFolders(): UseFoldersResult {
   );
 
   const renameSlide = useCallback(
-    async (slideId: string, name: string) => {
-      await patchSlideName(slideId, name);
-      await refresh();
+    async (slideId: string, name: string, kind: ContentKind = 'slide') => {
+      if (import.meta.env.DEV) {
+        await patchSlideName(slideId, name, kind);
+        notifyAuthoringChanged();
+        await refresh();
+        return;
+      }
+      const hosted = await runStructuralMutation<Record<string, unknown>>({
+        label: `Rename ${kind === 'document' ? 'document' : 'deck'}`,
+        endpoint: `/__slides/${encodeURIComponent(slideId)}${kindQuery(kind)}`,
+        method: 'PATCH',
+        body: { name },
+        destination: () => window.location.href,
+      });
+      window.location.assign(
+        deployedStudioUrl(
+          window.location.href,
+          hosted.status.operation.targetMainSha,
+          hosted.status.operation.operationId,
+        ),
+      );
     },
-    [refresh],
+    [refresh, runStructuralMutation],
   );
 
   const duplicateSlide = useCallback(
-    async (slideId: string, newId?: string) => {
-      const duplicatedId = await duplicateSlideReq(slideId, newId);
-      await refresh();
+    async (slideId: string, newId?: string, kind: ContentKind = 'slide') => {
+      if (import.meta.env.DEV) {
+        const duplicatedId = await duplicateSlideReq(slideId, newId, kind);
+        notifyAuthoringChanged();
+        await refresh();
+        return duplicatedId;
+      }
+      let duplicatedId = newId;
+      const hosted = await runStructuralMutation<Record<string, unknown>>({
+        label: `Duplicate ${kind === 'document' ? 'document' : 'deck'}`,
+        endpoint: `/__slides/${encodeURIComponent(slideId)}/duplicate${kindQuery(kind)}`,
+        method: 'POST',
+        body: (operationId) => {
+          duplicatedId ||= `${slideId}-copy-${operationId.slice(0, 8)}`;
+          return { newId: duplicatedId };
+        },
+        destination: () => (kind === 'document' ? '/documents' : '/'),
+      });
+      if (!duplicatedId) throw new Error('Studio did not resolve the duplicate ID');
+      window.location.assign(
+        deployedStudioUrl(
+          kind === 'document' ? '/documents' : '/',
+          hosted.status.operation.targetMainSha,
+          hosted.status.operation.operationId,
+        ),
+      );
       return duplicatedId;
     },
-    [refresh],
+    [refresh, runStructuralMutation],
   );
 
   const deleteSlide = useCallback(
-    async (slideId: string) => {
-      await deleteSlideReq(slideId);
-      await refresh();
+    async (slideId: string, kind: ContentKind = 'slide') => {
+      if (import.meta.env.DEV) {
+        await deleteSlideReq(slideId, kind);
+        notifyAuthoringChanged();
+        await refresh();
+        return;
+      }
+      const hosted = await runStructuralMutation<Record<string, unknown>>({
+        label: `Delete ${kind === 'document' ? 'document' : 'deck'}`,
+        endpoint: `/__slides/${encodeURIComponent(slideId)}${kindQuery(kind)}`,
+        method: 'DELETE',
+        body: {},
+        destination: () => (kind === 'document' ? '/documents' : '/'),
+      });
+      window.location.assign(
+        deployedStudioUrl(
+          kind === 'document' ? '/documents' : '/',
+          hosted.status.operation.targetMainSha,
+          hosted.status.operation.operationId,
+        ),
+      );
     },
-    [refresh],
+    [refresh, runStructuralMutation],
   );
 
   return {

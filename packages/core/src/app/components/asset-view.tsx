@@ -67,10 +67,12 @@ import {
   searchSvgl,
   useAssets,
 } from '@/lib/assets';
+import { authoringWritable } from '@/lib/authoring';
+import type { ContentKind } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 
-type Props = { slideId: string | null };
+type Props = { slideId: string | null; kind?: ContentKind };
 
 type Scope = 'slide' | 'global';
 type ViewMode = 'grid' | 'list';
@@ -161,11 +163,11 @@ type ConflictState = {
   resolve: (decision: 'replace' | 'rename' | 'cancel') => void;
 };
 
-export function AssetView({ slideId }: Props) {
+export function AssetView({ slideId, kind = 'slide' }: Props) {
   const lockedToGlobal = slideId === null;
   const [scope, setScope] = useState<Scope>(lockedToGlobal ? 'global' : 'slide');
   const effectiveSlideId = scope === 'global' || slideId === null ? GLOBAL_SLIDE_ID : slideId;
-  const { assets, loading, available, upload, rename, remove } = useAssets(effectiveSlideId);
+  const { assets, loading, available, upload, rename, remove } = useAssets(effectiveSlideId, kind);
   const [dragActive, setDragActive] = useState(false);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [preview, setPreview] = useState<AssetEntry | null>(null);
@@ -182,6 +184,8 @@ export function AssetView({ slideId }: Props) {
   const dragDepth = useRef(0);
   const inputId = useId();
   const t = useLocale();
+  const contentScopeLabel = kind === 'document' ? t.asset.scopeDocument : t.asset.scopeSlide;
+  const contentAssetPath = `${kind === 'document' ? 'documents' : 'slides'}/${slideId}/assets/`;
 
   const deferredQuery = useDeferredValue(query);
   const visibleAssets = useMemo(
@@ -225,7 +229,7 @@ export function AssetView({ slideId }: Props) {
   };
 
   async function handleFile(file: File) {
-    if (!available) return;
+    if (!available || !authoringWritable) return;
     if (existingNames.has(file.name)) {
       const decision = await new Promise<'replace' | 'rename' | 'cancel'>((resolve) => {
         setConflict({ file, resolve });
@@ -278,7 +282,7 @@ export function AssetView({ slideId }: Props) {
   function prepareDelete(asset: AssetEntry) {
     setConfirmDelete(asset);
     setConfirmDeleteUsages(null);
-    listAssetUsages(effectiveSlideId, asset.name)
+    listAssetUsages(effectiveSlideId, asset.name, kind)
       .then((usages) => setConfirmDeleteUsages(usages))
       .catch(() => setConfirmDeleteUsages([]));
   }
@@ -296,13 +300,13 @@ export function AssetView({ slideId }: Props) {
       aria-label={t.asset.sectionAria}
       className={cn('relative flex h-full flex-col bg-background')}
       onDragEnter={(e) => {
-        if (!hasFiles(e)) return;
+        if (!authoringWritable || !hasFiles(e)) return;
         e.preventDefault();
         dragDepth.current += 1;
         setDragActive(true);
       }}
       onDragOver={(e) => {
-        if (!hasFiles(e)) return;
+        if (!authoringWritable || !hasFiles(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
       }}
@@ -311,7 +315,7 @@ export function AssetView({ slideId }: Props) {
         if (dragDepth.current === 0) setDragActive(false);
       }}
       onDrop={(e) => {
-        if (!hasFiles(e)) return;
+        if (!authoringWritable || !hasFiles(e)) return;
         e.preventDefault();
         dragDepth.current = 0;
         setDragActive(false);
@@ -327,14 +331,14 @@ export function AssetView({ slideId }: Props) {
           ) : (
             <Tabs value={scope} onValueChange={(next) => setScope(next as Scope)}>
               <TabsList>
-                <TabsTrigger value="slide">{t.asset.scopeSlide}</TabsTrigger>
+                <TabsTrigger value="slide">{contentScopeLabel}</TabsTrigger>
                 <TabsTrigger value="global">{t.asset.scopeGlobal}</TabsTrigger>
               </TabsList>
             </Tabs>
           )}
           <p className="min-w-0 truncate text-[12px] text-muted-foreground">
             <span className="font-mono text-[11.5px]">
-              {scope === 'global' ? 'assets/' : `slides/${slideId}/assets/`}
+              {scope === 'global' ? 'assets/' : contentAssetPath}
             </span>
             {!loading && (
               <>
@@ -352,9 +356,13 @@ export function AssetView({ slideId }: Props) {
           <button
             type="button"
             onClick={() => setLogoSearchOpen(true)}
+            disabled={!authoringWritable}
+            aria-disabled={!authoringWritable}
+            title={authoringWritable ? t.asset.searchLogos : 'Read-only preview'}
             className={cn(
               'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[5px] border border-border bg-card px-2.5 text-[12.5px] font-medium transition-colors',
               'hover:bg-muted/60 hover:border-foreground/20 active:translate-y-px',
+              !authoringWritable && 'cursor-not-allowed opacity-50',
             )}
           >
             <Search className="size-3.5" />
@@ -362,10 +370,13 @@ export function AssetView({ slideId }: Props) {
           </button>
           <label
             htmlFor={inputId}
+            aria-disabled={!authoringWritable}
+            title={authoringWritable ? t.asset.upload : 'Read-only preview'}
             className={cn(
               'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[5px] bg-foreground px-3 text-[12.5px] font-medium text-background transition-colors',
               'shadow-[inset_0_1px_0_oklch(1_0_0/0.12),0_1px_0_oklch(0_0_0/0.12)]',
               'hover:bg-foreground/90 active:translate-y-px',
+              !authoringWritable && 'pointer-events-none cursor-not-allowed opacity-50',
             )}
           >
             <Upload className="size-3.5" />
@@ -375,6 +386,7 @@ export function AssetView({ slideId }: Props) {
             id={inputId}
             type="file"
             multiple
+            disabled={!authoringWritable}
             className="sr-only"
             onChange={(e) => {
               if (e.target.files && e.target.files.length > 0) {
@@ -532,6 +544,7 @@ export function AssetView({ slideId }: Props) {
                   onPreview={() => setPreview(asset)}
                   onRename={() => setRenaming(asset.name)}
                   onDelete={() => prepareDelete(asset)}
+                  writable={authoringWritable}
                 />
               ) : (
                 <AssetListItem
@@ -540,6 +553,7 @@ export function AssetView({ slideId }: Props) {
                   onPreview={() => setPreview(asset)}
                   onRename={() => setRenaming(asset.name)}
                   onDelete={() => prepareDelete(asset)}
+                  writable={authoringWritable}
                 />
               ),
             )}
@@ -596,7 +610,7 @@ export function AssetView({ slideId }: Props) {
             const assetPath =
               scope === 'global' ? `@assets/${target.name}` : `./assets/${target.name}`;
             for (const u of usages) {
-              const rev = await revertAssetUsage(u.slideId, assetPath);
+              const rev = await revertAssetUsage(u.slideId, assetPath, kind);
               if (!rev.ok) {
                 toast.error(format(t.asset.toastRevertFailed, { slideId: u.slideId }));
                 return;
@@ -870,11 +884,13 @@ function AssetCard({
   onPreview,
   onRename,
   onDelete,
+  writable,
 }: {
   asset: AssetEntry;
   onPreview: () => void;
   onRename: () => void;
   onDelete: () => void;
+  writable: boolean;
 }) {
   const isImage = asset.mime.startsWith('image/');
   const t = useLocale();
@@ -921,7 +937,13 @@ function AssetCard({
             </time>
           </div>
         </div>
-        <AssetActions asset={asset} onPreview={onPreview} onRename={onRename} onDelete={onDelete} />
+        <AssetActions
+          asset={asset}
+          onPreview={onPreview}
+          onRename={onRename}
+          onDelete={onDelete}
+          writable={writable}
+        />
       </div>
     </div>
   );
@@ -932,11 +954,13 @@ function AssetListItem({
   onPreview,
   onRename,
   onDelete,
+  writable,
 }: {
   asset: AssetEntry;
   onPreview: () => void;
   onRename: () => void;
   onDelete: () => void;
+  writable: boolean;
 }) {
   const isImage = asset.mime.startsWith('image/');
   const t = useLocale();
@@ -995,7 +1019,13 @@ function AssetListItem({
       <div className="hidden w-16 shrink-0 justify-end sm:flex">
         <UsageBadge unused={asset.unused} showUsed />
       </div>
-      <AssetActions asset={asset} onPreview={onPreview} onRename={onRename} onDelete={onDelete} />
+      <AssetActions
+        asset={asset}
+        onPreview={onPreview}
+        onRename={onRename}
+        onDelete={onDelete}
+        writable={writable}
+      />
     </div>
   );
 }
@@ -1005,11 +1035,13 @@ function AssetActions({
   onPreview,
   onRename,
   onDelete,
+  writable,
 }: {
   asset: AssetEntry;
   onPreview: () => void;
   onRename: () => void;
   onDelete: () => void;
+  writable: boolean;
 }) {
   const t = useLocale();
   return (
@@ -1029,14 +1061,18 @@ function AssetActions({
           <ImageIcon />
           {t.asset.previewMenuItem}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onRename}>
-          <Pencil />
-          {t.asset.renameMenuItem}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onDelete}>
-          <Trash2 />
-          {t.asset.deleteMenuItem}
-        </DropdownMenuItem>
+        {writable ? (
+          <>
+            <DropdownMenuItem onClick={onRename}>
+              <Pencil />
+              {t.asset.renameMenuItem}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onDelete}>
+              <Trash2 />
+              {t.asset.deleteMenuItem}
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

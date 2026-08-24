@@ -10,12 +10,12 @@ export type SlideComment = {
 
 type ListResponse = { comments: SlideComment[] };
 
-export function useComments(slideId: string) {
+export function useComments(slideId: string, enabled = true) {
   const [comments, setComments] = useState<SlideComment[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    if (!slideId) return;
+    if (!enabled || !slideId || !import.meta.env.DEV) return;
     try {
       const res = await fetch(`/__comments?slideId=${encodeURIComponent(slideId)}`);
       if (!res.ok) {
@@ -28,10 +28,13 @@ export function useComments(slideId: string) {
     } catch (e) {
       setError(String((e as Error).message ?? e));
     }
-  }, [slideId]);
+  }, [slideId, enabled]);
 
   const add = useCallback(
     async (line: number, column: number, text: string) => {
+      if (!enabled || !import.meta.env.DEV) {
+        throw new Error('Comments are available only for slides in local development');
+      }
       const res = await fetch('/__comments/add', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -43,18 +46,21 @@ export function useComments(slideId: string) {
       }
       await refetch();
     },
-    [slideId, refetch],
+    [slideId, refetch, enabled],
   );
 
   const remove = useCallback(
     async (id: string) => {
+      if (!enabled || !import.meta.env.DEV) {
+        throw new Error('Comments are available only for slides in local development');
+      }
       const res = await fetch(`/__comments/${id}?slideId=${encodeURIComponent(slideId)}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error(`DELETE /__comments/${id} → ${res.status}`);
       await refetch();
     },
-    [slideId, refetch],
+    [slideId, refetch, enabled],
   );
 
   useEffect(() => {
@@ -62,13 +68,13 @@ export function useComments(slideId: string) {
   }, [refetch]);
 
   useEffect(() => {
-    if (!import.meta.hot) return;
+    if (!enabled || !import.meta.hot) return;
     const handler = () => refetch();
     import.meta.hot.on('vite:afterUpdate', handler);
     return () => {
       import.meta.hot?.off('vite:afterUpdate', handler);
     };
-  }, [refetch]);
+  }, [refetch, enabled]);
 
   return { comments, error, refetch, add, remove };
 }

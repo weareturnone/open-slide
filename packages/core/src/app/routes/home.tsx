@@ -1,3 +1,4 @@
+import config from 'virtual:open-slide/config';
 import {
   ArrowDownAZ,
   ChevronDown,
@@ -8,6 +9,7 @@ import {
   MoreHorizontal,
   Palette,
   Pencil,
+  Plus,
   Search,
   Trash2,
   X,
@@ -15,6 +17,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { toast } from 'sonner';
+import { HostedPublishButton } from '@/components/hosted-publish-button';
+import { NewDeckDialog } from '@/components/new-deck-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -35,9 +39,23 @@ import { cn } from '@/lib/utils';
 import { FolderIconChip, SLIDE_DND_MIME } from '../components/sidebar/folder-item';
 import { ALL_SLIDES_ID, DRAFT_ID } from '../components/sidebar/sidebar';
 import { SlideCanvas } from '../components/slide-canvas';
+import { authoringEnabled, authoringWritable } from '../lib/authoring';
 import { SlidePageProvider } from '../lib/page-context';
-import type { Folder, FolderIcon, SlideModule } from '../lib/sdk';
-import { loadSlide, slideCreatedAt, slideIds } from '../lib/slides';
+import {
+  type ContentKind,
+  canvasSizeFor,
+  type Folder,
+  type FolderIcon,
+  type SlideModule,
+} from '../lib/sdk';
+import {
+  documentCreatedAt,
+  documentIds,
+  loadDocument,
+  loadSlide,
+  slideCreatedAt,
+  slideIds,
+} from '../lib/slides';
 import type { HomeOutletContext } from './home-shell';
 
 type SortKey = 'created-desc' | 'created-asc' | 'title-asc' | 'title-desc';
@@ -69,7 +87,7 @@ function useSortPref(): [SortKey, (next: SortKey) => void] {
 
 const TITLE_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
-export function Home() {
+export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
   const {
     manifest,
     loading,
@@ -85,21 +103,27 @@ export function Home() {
     deleteSlide,
   } = useOutletContext<HomeOutletContext>();
   const t = useLocale();
+  const [newDeckOpen, setNewDeckOpen] = useState(false);
+  const isDocuments = kind === 'document';
 
   const isAll = selectedId === ALL_SLIDES_ID;
   const isDraft = selectedId === DRAFT_ID;
   const selectedFolder =
     isAll || isDraft ? null : (manifest.folders.find((f) => f.id === selectedId) ?? null);
-  const visibleSlides = isAll
-    ? slideIds
-    : isDraft
-      ? draftSlides
-      : (slidesByFolder[selectedId] ?? []);
+  const visibleSlides = isDocuments
+    ? documentIds
+    : isAll
+      ? slideIds
+      : isDraft
+        ? draftSlides
+        : (slidesByFolder[selectedId] ?? []);
 
-  const title = selectedFolder?.name ?? (isAll ? t.home.slides : t.home.draft);
+  const title = isDocuments
+    ? 'Documents'
+    : (selectedFolder?.name ?? (isAll ? t.home.slides : t.home.draft));
   const headerIcon = selectedFolder?.icon ?? {
     type: 'emoji' as const,
-    value: isAll ? '🎞️' : '📝',
+    value: isDocuments ? '📄' : isAll ? '🎞️' : '📝',
   };
 
   const [query, setQuery] = useState('');
@@ -125,13 +149,21 @@ export function Home() {
         list.sort((a, b) => TITLE_COLLATOR.compare(titleOf(b), titleOf(a)));
         break;
       case 'created-asc':
-        list.sort((a, b) => (slideCreatedAt[a] ?? 0) - (slideCreatedAt[b] ?? 0));
+        list.sort(
+          (a, b) =>
+            ((isDocuments ? documentCreatedAt : slideCreatedAt)[a] ?? 0) -
+            ((isDocuments ? documentCreatedAt : slideCreatedAt)[b] ?? 0),
+        );
         break;
       default:
-        list.sort((a, b) => (slideCreatedAt[b] ?? 0) - (slideCreatedAt[a] ?? 0));
+        list.sort(
+          (a, b) =>
+            ((isDocuments ? documentCreatedAt : slideCreatedAt)[b] ?? 0) -
+            ((isDocuments ? documentCreatedAt : slideCreatedAt)[a] ?? 0),
+        );
     }
     return list;
-  }, [filteredSlides, sortKey, titleMap]);
+  }, [filteredSlides, sortKey, titleMap, isDocuments]);
   const isSearching = trimmedQuery.length > 0;
 
   return (
@@ -162,6 +194,14 @@ export function Home() {
                 <FolderIconChip icon={{ type: 'emoji', value: '🎞️' }} />
                 <span className="flex-1 truncate">{t.home.slides}</span>
                 <span className="folio">{slideIds.length.toString().padStart(2, '0')}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => selectFolder('documents')}
+                className={cn(isDocuments && 'bg-muted text-foreground')}
+              >
+                <FolderIconChip icon={{ type: 'emoji', value: '📄' }} />
+                <span className="flex-1 truncate">Documents</span>
+                <span className="folio">{documentIds.length.toString().padStart(2, '0')}</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => selectFolder(DRAFT_ID)}
@@ -199,8 +239,15 @@ export function Home() {
             </span>
           )}
           <div className="ml-auto flex w-full items-center gap-2 md:w-auto">
+            <HostedPublishButton />
+            {config.authoring?.decks && (
+              <Button size="sm" variant="brand" onClick={() => setNewDeckOpen(true)}>
+                <Plus className="size-3.5" />
+                New {isDocuments ? 'document' : 'deck'}
+              </Button>
+            )}
             <SortControl value={sortKey} onChange={setSortKey} />
-            <SearchInput value={query} onChange={setQuery} />
+            <SearchInput value={query} onChange={setQuery} kind={kind} />
           </div>
         </div>
       </header>
@@ -208,7 +255,7 @@ export function Home() {
       {loading ? (
         <HomeLoading />
       ) : visibleSlides.length === 0 ? (
-        <EmptyState isDraft={isAll || isDraft} folderName={selectedFolder?.name} />
+        <EmptyState kind={kind} isDraft={isAll || isDraft} folderName={selectedFolder?.name} />
       ) : filteredSlides.length === 0 ? (
         <NoResultsState query={query} onClear={() => setQuery('')} />
       ) : (
@@ -217,36 +264,52 @@ export function Home() {
             <li key={id}>
               <SlideCard
                 id={id}
-                folders={manifest.folders}
+                kind={kind}
+                folders={isDocuments ? [] : manifest.folders}
                 currentFolderId={manifest.assignments[id] ?? null}
-                onRename={(name) => renameSlide(id, name)}
+                onRename={(name) => renameSlide(id, name, kind)}
                 onDuplicate={async () => {
                   const slideName = titleMap[id] ?? id;
                   try {
-                    const newSlideId = await duplicateSlide(id);
+                    const newSlideId = await duplicateSlide(id, undefined, kind);
                     toast.success(
-                      format(t.home.toastSlideDuplicated, {
-                        slide: slideName,
-                        newSlide: newSlideId,
-                      }),
+                      isDocuments
+                        ? `Document duplicated as ${newSlideId}`
+                        : format(t.home.toastSlideDuplicated, {
+                            slide: slideName,
+                            newSlide: newSlideId,
+                          }),
                     );
                   } catch {
-                    toast.error(t.home.toastSlideDuplicateFailed);
+                    toast.error(
+                      isDocuments
+                        ? 'Document could not be duplicated'
+                        : t.home.toastSlideDuplicateFailed,
+                    );
                   }
                 }}
                 onMove={(folderId) => assign(id, folderId)}
-                onDelete={() => deleteSlide(id)}
+                onDelete={() => deleteSlide(id, kind)}
                 onTitleResolved={reportTitle}
               />
             </li>
           ))}
         </ul>
       )}
+      <NewDeckDialog open={newDeckOpen} onClose={() => setNewDeckOpen(false)} kind={kind} />
     </>
   );
 }
 
-function SearchInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function SearchInput({
+  value,
+  onChange,
+  kind,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  kind: ContentKind;
+}) {
   const t = useLocale();
   return (
     <div className="relative w-full md:w-[240px]">
@@ -258,7 +321,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (value: str
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={t.home.searchPlaceholder}
+        placeholder={kind === 'document' ? 'Search documents' : t.home.searchPlaceholder}
         className="h-8 w-full rounded-[6px] border border-border bg-background pl-8 pr-7 text-[12.5px] outline-none placeholder:text-muted-foreground/70 focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
       />
       {value && (
@@ -364,7 +427,15 @@ function NoResultsState({ query, onClear }: { query: string; onClear: () => void
   );
 }
 
-function EmptyState({ isDraft, folderName }: { isDraft: boolean; folderName?: string }) {
+function EmptyState({
+  kind,
+  isDraft,
+  folderName,
+}: {
+  kind: ContentKind;
+  isDraft: boolean;
+  folderName?: string;
+}) {
   const t = useLocale();
   const folderEmptyTitle = t.home.folderEmptyTitle.replace(
     '{name}',
@@ -376,7 +447,20 @@ function EmptyState({ isDraft, folderName }: { isDraft: boolean; folderName?: st
         <div className="flex size-12 items-center justify-center rounded-full border border-hairline bg-card text-muted-foreground">
           <FolderPlus className="size-5" />
         </div>
-        {isDraft ? (
+        {kind === 'document' ? (
+          <>
+            <p className="mt-4 font-heading text-[15px] font-semibold tracking-tight">
+              No documents yet
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+              Create an A4 document from the catalog or add one with Codex under{' '}
+              <code className="rounded-[4px] bg-muted px-1.5 py-0.5 font-mono text-[11.5px] text-foreground">
+                documents/
+              </code>
+              .
+            </p>
+          </>
+        ) : isDraft ? (
           <>
             <p className="mt-4 font-heading text-[15px] font-semibold tracking-tight">
               {t.home.noSlidesYet}
@@ -451,6 +535,7 @@ type DialogKind = null | 'rename' | 'move' | 'delete';
 
 function SlideCard({
   id,
+  kind,
   folders,
   currentFolderId,
   onRename,
@@ -460,6 +545,7 @@ function SlideCard({
   onTitleResolved,
 }: {
   id: string;
+  kind: ContentKind;
   folders: Folder[];
   currentFolderId: string | null;
   onRename: (name: string) => Promise<void> | void;
@@ -475,7 +561,7 @@ function SlideCard({
 
   useEffect(() => {
     let cancelled = false;
-    loadSlide(id)
+    (kind === 'document' ? loadDocument(id) : loadSlide(id))
       .then((mod) => {
         if (!cancelled) setSlide(mod);
       })
@@ -483,10 +569,12 @@ function SlideCard({
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, kind]);
 
   const FirstPage = slide?.default[0];
   const displayTitle = slide?.meta?.title ?? id;
+  const canvas = canvasSizeFor(slide);
+  const href = `/${kind === 'document' ? 'd' : 's'}/${id}`;
 
   useEffect(() => {
     if (slide && onTitleResolved) onTitleResolved(id, displayTitle);
@@ -496,8 +584,9 @@ function SlideCard({
     <>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag source wraps an interactive Link */}
       <div
-        draggable
+        draggable={import.meta.env.DEV}
         onDragStart={(e) => {
+          if (!import.meta.env.DEV) return;
           e.dataTransfer.setData(SLIDE_DND_MIME, id);
           e.dataTransfer.effectAllowed = 'move';
           const chip = createDragChip(displayTitle);
@@ -511,14 +600,23 @@ function SlideCard({
         className={cn('group relative motion-safe:transition-opacity', dragging && 'opacity-40')}
       >
         <Link
-          to={`/s/${id}`}
+          to={href}
           className="block rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           {/* Slide thumb — tight border, grey baseboard, no shadcn rounded-xl */}
-          <div className="relative aspect-video overflow-hidden rounded-[6px] border border-hairline bg-card shadow-edge ring-1 ring-foreground/[0.04] group-hover:shadow-floating group-hover:ring-foreground/20 motion-safe:transition-[box-shadow,--tw-ring-color,scale] motion-safe:duration-200 group-active:scale-[0.99]">
+          <div
+            className="relative overflow-hidden rounded-[6px] border border-hairline bg-card shadow-edge ring-1 ring-foreground/[0.04] group-hover:shadow-floating group-hover:ring-foreground/20 motion-safe:transition-[box-shadow,--tw-ring-color,scale] motion-safe:duration-200 group-active:scale-[0.99]"
+            style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}
+          >
             {FirstPage ? (
               <div className="h-full w-full ease-swift motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:scale-[1.03]">
-                <SlideCanvas flat freezeMotion design={slide?.design}>
+                <SlideCanvas
+                  flat
+                  freezeMotion
+                  design={slide?.design}
+                  canvasWidth={canvas.width}
+                  canvasHeight={canvas.height}
+                >
                   <SlidePageProvider index={0} total={slide?.default.length ?? 1}>
                     <FirstPage />
                   </SlidePageProvider>
@@ -532,7 +630,7 @@ function SlideCard({
           </div>
         </Link>
         <div className="mt-3 flex items-center gap-2">
-          <Link to={`/s/${id}`} className="min-w-0 flex-1 focus-visible:outline-none">
+          <Link to={href} className="min-w-0 flex-1 focus-visible:outline-none">
             <h3 className="min-w-0 truncate font-heading text-[14px] font-medium tracking-tight">
               {displayTitle}
             </h3>
@@ -548,7 +646,7 @@ function SlideCard({
           )}
         </div>
 
-        {import.meta.env.DEV && (
+        {authoringEnabled && (
           <div className="absolute right-2 top-2">
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -560,26 +658,32 @@ function SlideCard({
                       e.preventDefault();
                     }}
                     className="flex size-7 items-center justify-center rounded-[5px] bg-card/90 text-foreground shadow-edge ring-1 ring-border opacity-0 outline-none backdrop-blur hover:bg-card group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-ring/40 aria-expanded:opacity-100 motion-safe:transition-opacity motion-safe:duration-150"
-                    aria-label={tCard.home.slideActions}
+                    aria-label={kind === 'document' ? 'Document actions' : tCard.home.slideActions}
                   >
                     <MoreHorizontal className="size-3.5" />
                   </button>
                 }
               />
               <DropdownMenuContent align="end" className="min-w-[160px]">
-                <DropdownMenuItem onClick={() => setDialog('rename')}>
+                <DropdownMenuItem disabled={!authoringWritable} onClick={() => setDialog('rename')}>
                   <Pencil />
                   {tCard.common.rename}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onDuplicate()}>
+                <DropdownMenuItem disabled={!authoringWritable} onClick={() => onDuplicate()}>
                   <Copy />
                   {tCard.home.duplicate}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setDialog('move')}>
-                  <FolderInput />
-                  {tCard.home.moveToFolder}
-                </DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" onClick={() => setDialog('delete')}>
+                {kind === 'slide' && import.meta.env.DEV && (
+                  <DropdownMenuItem onClick={() => setDialog('move')}>
+                    <FolderInput />
+                    {tCard.home.moveToFolder}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={!authoringWritable}
+                  onClick={() => setDialog('delete')}
+                >
                   <Trash2 />
                   {tCard.common.delete}
                 </DropdownMenuItem>
@@ -592,26 +696,30 @@ function SlideCard({
       <RenameDialog
         open={dialog === 'rename'}
         initialName={displayTitle}
+        kind={kind}
         onOpenChange={(v) => setDialog(v ? 'rename' : null)}
         onSubmit={async (name) => {
           await onRename(name);
           setDialog(null);
         }}
       />
-      <MoveDialog
-        open={dialog === 'move'}
-        slideName={displayTitle}
-        folders={folders}
-        currentFolderId={currentFolderId}
-        onOpenChange={(v) => setDialog(v ? 'move' : null)}
-        onSubmit={async (folderId) => {
-          await onMove(folderId);
-          setDialog(null);
-        }}
-      />
+      {kind === 'slide' && (
+        <MoveDialog
+          open={dialog === 'move'}
+          slideName={displayTitle}
+          folders={folders}
+          currentFolderId={currentFolderId}
+          onOpenChange={(v) => setDialog(v ? 'move' : null)}
+          onSubmit={async (folderId) => {
+            await onMove(folderId);
+            setDialog(null);
+          }}
+        />
+      )}
       <DeleteDialog
         open={dialog === 'delete'}
         slideName={displayTitle}
+        kind={kind}
         onOpenChange={(v) => setDialog(v ? 'delete' : null)}
         onConfirm={async () => {
           await onDelete();
@@ -625,11 +733,13 @@ function SlideCard({
 function RenameDialog({
   open,
   initialName,
+  kind,
   onOpenChange,
   onSubmit,
 }: {
   open: boolean;
   initialName: string;
+  kind: ContentKind;
   onOpenChange: (open: boolean) => void;
   onSubmit: (name: string) => Promise<void> | void;
 }) {
@@ -667,9 +777,17 @@ function RenameDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <span className="eyebrow">{t.home.renameDialogEyebrow}</span>
-          <DialogTitle>{t.home.renameDialogTitle}</DialogTitle>
-          <DialogDescription>{t.home.renameDialogDescription}</DialogDescription>
+          <span className="eyebrow">
+            {kind === 'document' ? 'Document' : t.home.renameDialogEyebrow}
+          </span>
+          <DialogTitle>
+            {kind === 'document' ? 'Rename document' : t.home.renameDialogTitle}
+          </DialogTitle>
+          <DialogDescription>
+            {kind === 'document'
+              ? 'Change the title shown in the Documents library.'
+              : t.home.renameDialogDescription}
+          </DialogDescription>
         </DialogHeader>
         <input
           ref={inputRef}
@@ -683,7 +801,7 @@ function RenameDialog({
             }
           }}
           maxLength={80}
-          placeholder={t.home.slideNamePlaceholder}
+          placeholder={kind === 'document' ? 'Document name' : t.home.slideNamePlaceholder}
           className="h-9 w-full rounded-[6px] border border-border bg-background px-3 text-[13px] outline-none focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
         />
         <DialogFooter>
@@ -816,11 +934,13 @@ function FolderOption({
 function DeleteDialog({
   open,
   slideName,
+  kind,
   onOpenChange,
   onConfirm,
 }: {
   open: boolean;
   slideName: string;
+  kind: ContentKind;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => Promise<void> | void;
 }) {
@@ -844,14 +964,25 @@ function DeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <span className="eyebrow text-destructive/80">{t.home.deleteDialogEyebrow}</span>
-          <DialogTitle>{t.home.deleteDialogTitle}</DialogTitle>
-          <DialogDescription>
-            {t.home.deleteDialogDescriptionPrefix}
-            <span className="font-medium text-foreground">{slideName}</span>
-            {t.home.deleteDialogDescriptionMid}
-            {t.home.deleteDialogDescriptionSuffix}
-          </DialogDescription>
+          <span className="eyebrow text-destructive/80">
+            {kind === 'document' ? 'Document' : t.home.deleteDialogEyebrow}
+          </span>
+          <DialogTitle>
+            {kind === 'document' ? 'Delete document' : t.home.deleteDialogTitle}
+          </DialogTitle>
+          {kind === 'document' ? (
+            <DialogDescription>
+              Delete <span className="font-medium text-foreground">{slideName}</span> and its local
+              assets. Git history keeps the published source recoverable.
+            </DialogDescription>
+          ) : (
+            <DialogDescription>
+              {t.home.deleteDialogDescriptionPrefix}
+              <span className="font-medium text-foreground">{slideName}</span>
+              {t.home.deleteDialogDescriptionMid}
+              {t.home.deleteDialogDescriptionSuffix}
+            </DialogDescription>
+          )}
         </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>

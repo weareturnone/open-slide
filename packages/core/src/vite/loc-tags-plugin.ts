@@ -60,6 +60,7 @@ export function injectLocTags(code: string): string | null {
 export type LocTagsPluginOptions = {
   userCwd: string;
   slidesDir?: string;
+  documentsDir?: string;
 };
 
 // Vite normally hands `id` to plugins with forward slashes, but other
@@ -77,14 +78,16 @@ function isSlideSourceFile(id: string, slidesRootPosix: string): boolean {
 
 export function locTagsPlugin(opts: LocTagsPluginOptions): Plugin {
   const slidesRoot = path.resolve(opts.userCwd, opts.slidesDir ?? 'slides').replace(/\\/g, '/');
+  const documentsRoot = path
+    .resolve(opts.userCwd, opts.documentsDir ?? 'documents')
+    .replace(/\\/g, '/');
   return {
     name: 'open-slide:loc-tags',
-    apply: 'serve',
     // Must run before @vitejs/plugin-react so the JSX transform
     // sees our injected attributes.
     enforce: 'pre',
     transform(code, id) {
-      if (!isSlideSourceFile(id, slidesRoot)) return null;
+      if (!isSlideSourceFile(id, slidesRoot) && !isSlideSourceFile(id, documentsRoot)) return null;
       const next = injectLocTags(code);
       if (next === null) return null;
       return { code: next, map: null };

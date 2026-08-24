@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { type AssetEntry, uploadWithAutoRename, useAssets } from '@/lib/assets';
+import type { ContentKind } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 
@@ -21,17 +22,22 @@ export function AssetPickerDialog({
   slideId,
   onClose,
   onPick,
+  kind = 'slide',
 }: {
   slideId: string;
+  kind?: ContentKind;
   onClose: () => void;
   onPick: (asset: AssetEntry, scope: PickerScope) => void;
 }) {
   const [scope, setScope] = useState<PickerScope>('slide');
   const effectiveSlideId = scope === 'global' ? GLOBAL_PICKER_SLIDE_ID : slideId;
-  const { assets, loading, refresh } = useAssets(effectiveSlideId);
+  const { assets, loading, refresh } = useAssets(effectiveSlideId, kind);
   const images = assets.filter((a) => a.mime.startsWith('image/'));
   const t = useLocale();
-  const path = scope === 'global' ? 'assets/' : `slides/${slideId}/assets/`;
+  const path =
+    scope === 'global'
+      ? 'assets/'
+      : `${kind === 'document' ? 'documents' : 'slides'}/${slideId}/assets/`;
   const [descPrefix, descSuffix] = t.inspector.replaceImageDescription.split('{path}');
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -43,7 +49,7 @@ export function AssetPickerDialog({
       if (!file.type.startsWith('image/')) return;
       setUploading(true);
       try {
-        const { ok, status, entry } = await uploadWithAutoRename(effectiveSlideId, file);
+        const { ok, status, entry } = await uploadWithAutoRename(effectiveSlideId, file, kind);
         if (!ok || !entry) {
           toast.error(format(t.asset.toastUploadFailed, { status }));
           return;
@@ -54,7 +60,7 @@ export function AssetPickerDialog({
         setUploading(false);
       }
     },
-    [effectiveSlideId, scope, refresh, onPick, t],
+    [effectiveSlideId, scope, refresh, onPick, kind, t],
   );
 
   return (
@@ -70,7 +76,9 @@ export function AssetPickerDialog({
         </DialogHeader>
         <Tabs value={scope} onValueChange={(next) => setScope(next as PickerScope)}>
           <TabsList>
-            <TabsTrigger value="slide">{t.asset.scopeSlide}</TabsTrigger>
+            <TabsTrigger value="slide">
+              {kind === 'document' ? t.asset.scopeDocument : t.asset.scopeSlide}
+            </TabsTrigger>
             <TabsTrigger value="global">{t.asset.scopeGlobal}</TabsTrigger>
           </TabsList>
         </Tabs>

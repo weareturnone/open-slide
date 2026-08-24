@@ -47,4 +47,27 @@ describe('generateSlidesModule', () => {
       expect(code).not.toContain('推薦系統');
     });
   });
+
+  it('discovers documents beside slides without changing the slide loader contract', async () => {
+    await withSlidesRoot(async (workspace) => {
+      const slidesRoot = path.join(workspace, 'slides');
+      const documentsRoot = path.join(workspace, 'documents');
+      const slides = [await writeSlide(slidesRoot, 'deck')];
+      const documents = [await writeSlide(documentsRoot, 'proposal')];
+
+      const { code, ignored } = await generateSlidesModule(
+        slides,
+        slidesRoot,
+        false,
+        documents,
+        documentsRoot,
+      );
+
+      expect(ignored).toEqual([]);
+      expect(code).toContain('export const slideIds = ["deck"];');
+      expect(code).toContain('export const documentIds = ["proposal"];');
+      expect(code).toContain('export async function loadDocument(id)');
+      expect(code).toContain("default: throw new Error('Document not found: ' + id)");
+    });
+  });
 });

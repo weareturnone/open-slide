@@ -464,6 +464,19 @@ export function duplicateNotesElementInSource(source: string, index: number): st
   return rebuildNotesArray(source, arrayStart, arrayEnd, next);
 }
 
+/** Insert an empty notes slot at a page boundary. */
+export function insertNotesElementInSource(source: string, index: number): string | null {
+  if (!Number.isInteger(index) || index < 0) return null;
+  const found = findNotesArray(source);
+  if (found === 'invalid') return null;
+  if (found === null) return source;
+  const { arrayStart, arrayEnd, elementTexts } = found;
+  if (index > elementTexts.length) return null;
+  const next = elementTexts.slice();
+  next.splice(index, 0, 'undefined');
+  return rebuildNotesArray(source, arrayStart, arrayEnd, next);
+}
+
 function rebuildNotesArray(
   source: string,
   arrayStart: number,
@@ -539,6 +552,78 @@ function chooseInsertSeparator(prefix: string, existingSeparators: string[]): st
     return `,\n${indent}`;
   }
   return ', ';
+}
+
+export function insertPageComponentInSource(
+  source: string,
+  componentName: string,
+  componentSource: string,
+  index: number,
+): string | null {
+  if (!/^[A-Z][A-Za-z0-9]{2,79}$/.test(componentName)) return null;
+  if (!Number.isInteger(index) || index < 0) return null;
+  if (new RegExp(`\\b${componentName}\\b`).test(source)) return null;
+
+  let templateAst: unknown;
+  try {
+    templateAst = babelParse(componentSource, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      errorRecovery: false,
+    });
+  } catch {
+    return null;
+  }
+  const templateBody =
+    (templateAst as { program?: { body?: Array<Record<string, unknown>> } }).program?.body ?? [];
+  if (templateBody.length !== 1 || templateBody[0].type !== 'VariableDeclaration') return null;
+  const declarations =
+    (templateBody[0].declarations as Array<Record<string, unknown>> | undefined) ?? [];
+  const id = declarations[0]?.id as Record<string, unknown> | undefined;
+  if (declarations.length !== 1 || id?.type !== 'Identifier' || id.name !== componentName) {
+    return null;
+  }
+
+  const found = findDefaultExportArray(source);
+  if (!found || index > found.elements.length) return null;
+  const { elements, arrayStart, arrayEnd } = found;
+  let next: string;
+  if (elements.length === 0) {
+    next = `${source.slice(0, arrayStart)}[${componentName}]${source.slice(arrayEnd)}`;
+  } else {
+    const prefix = source.slice(arrayStart, elements[0].start);
+    const suffix = source.slice(elements[elements.length - 1].end, arrayEnd);
+    const separators: string[] = [];
+    for (let i = 0; i < elements.length - 1; i++) {
+      separators.push(source.slice(elements[i].end, elements[i + 1].start));
+    }
+    const values = elements.map((element) => source.slice(element.start, element.end));
+    values.splice(index, 0, componentName);
+    const separator = chooseInsertSeparator(prefix, separators);
+    const nextSeparators = separators.slice();
+    nextSeparators.splice(Math.min(index, nextSeparators.length), 0, separator);
+    let rebuilt = prefix + values[0];
+    for (let i = 1; i < values.length; i++) {
+      rebuilt += (nextSeparators[i - 1] ?? separator) + values[i];
+    }
+    rebuilt += suffix;
+    next = source.slice(0, arrayStart) + rebuilt + source.slice(arrayEnd);
+  }
+
+  const insertionPoint = next.search(/export\s+const\s+meta\b|export\s+default\b/);
+  if (insertionPoint < 0) return null;
+  const declaration = componentSource.trim();
+  const withComponent = `${next.slice(0, insertionPoint)}${declaration}\n\n${next.slice(insertionPoint)}`;
+  try {
+    babelParse(withComponent, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      errorRecovery: false,
+    });
+  } catch {
+    return null;
+  }
+  return withComponent;
 }
 
 /**

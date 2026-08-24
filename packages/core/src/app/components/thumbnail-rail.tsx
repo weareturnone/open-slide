@@ -22,10 +22,11 @@ import {
   Grid2x2,
   ListOrdered,
   type LucideIcon,
+  Plus,
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -71,6 +72,11 @@ type Props = {
   moduleTransition?: SlideTransition;
   /** When provided, the vertical rail header renders a button that opens the overview grid. */
   onOverview?: () => void;
+  onInsert?: (index: number) => void;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  insertNoun?: 'slide' | 'page';
+  overviewAriaLabel?: string;
 };
 
 const DEFAULT_VERTICAL_THUMB_WIDTH = 184;
@@ -97,6 +103,11 @@ export function ThumbnailRail({
   width,
   moduleTransition,
   onOverview,
+  onInsert,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+  insertNoun = 'slide',
+  overviewAriaLabel,
 }: Props) {
   const activeRef = useRef<HTMLButtonElement | null>(null);
   const virtualListRef = useRef<HTMLDivElement | null>(null);
@@ -121,8 +132,8 @@ export function ThumbnailRail({
     width != null
       ? Math.max(MIN_VERTICAL_THUMB_WIDTH, width - VERTICAL_RAIL_CHROME)
       : DEFAULT_VERTICAL_THUMB_WIDTH;
-  const scale = thumbWidth / CANVAS_WIDTH;
-  const height = CANVAS_HEIGHT * scale;
+  const scale = thumbWidth / canvasWidth;
+  const height = canvasHeight * scale;
   const rowHeight = height + VERTICAL_THUMB_PADDING_Y + VERTICAL_THUMB_GAP;
 
   const scrollToCurrent = useCallback(
@@ -185,6 +196,8 @@ export function ThumbnailRail({
           thumbWidth={thumbWidth}
           height={height}
           moduleTransition={moduleTransition}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
         />
       );
 
@@ -211,12 +224,8 @@ export function ThumbnailRail({
         </button>
       );
 
-      if (!actions) {
-        return <Fragment key={i}>{node}</Fragment>;
-      }
-      return (
+      const thumb = actions ? (
         <ThumbContextMenu
-          key={i}
           index={i}
           actions={actions}
           pageCount={pages.length}
@@ -224,6 +233,23 @@ export function ThumbnailRail({
         >
           {node}
         </ThumbContextMenu>
+      ) : (
+        node
+      );
+      return (
+        <div key={i} className="group/boundary relative">
+          {thumb}
+          {onInsert && i < pages.length - 1 && (
+            <button
+              type="button"
+              onClick={() => onInsert(i + 1)}
+              aria-label={`Insert ${insertNoun} after page ${i + 1}`}
+              className="absolute -bottom-2 left-1/2 z-10 grid size-5 -translate-x-1/2 place-items-center rounded-full border border-hairline bg-card text-muted-foreground opacity-55 shadow-sm transition hover:border-brand hover:text-brand hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+            >
+              <Plus className="size-3" />
+            </button>
+          )}
+        </div>
       );
     },
     [
@@ -233,18 +259,22 @@ export function ThumbnailRail({
       height,
       moduleTransition,
       onReorder,
+      onInsert,
       onSelect,
       pages.length,
       scale,
       thumbWidth,
+      canvasWidth,
+      canvasHeight,
+      insertNoun,
       t.thumbnailRail.goToPageAria,
       t.thumbnailRail.pageActionsAria,
     ],
   );
 
   if (orientation === 'horizontal') {
-    const scale = HORIZONTAL_THUMB_HEIGHT / CANVAS_HEIGHT;
-    const horizontalWidth = CANVAS_WIDTH * scale;
+    const scale = HORIZONTAL_THUMB_HEIGHT / canvasHeight;
+    const horizontalWidth = canvasWidth * scale;
     return (
       <div className="bg-sidebar">
         <div className="overflow-x-auto overflow-y-hidden">
@@ -257,6 +287,8 @@ export function ThumbnailRail({
             onSelect={onSelect}
             scale={scale}
             thumbWidth={horizontalWidth}
+            canvasWidth={canvasWidth}
+            canvasHeight={canvasHeight}
           />
         </div>
       </div>
@@ -277,7 +309,7 @@ export function ThumbnailRail({
                     <button
                       type="button"
                       onClick={onOverview}
-                      aria-label={t.thumbnailRail.overviewAria}
+                      aria-label={overviewAriaLabel ?? t.thumbnailRail.overviewAria}
                       className={cn(
                         'flex size-5 items-center justify-center rounded-[3px] text-muted-foreground/70 outline-none',
                         'motion-safe:transition-colors hover:bg-muted hover:text-foreground',
@@ -289,7 +321,7 @@ export function ThumbnailRail({
                   }
                 />
                 <TooltipContent side="bottom" sideOffset={6}>
-                  {t.thumbnailRail.overviewAria}
+                  {overviewAriaLabel ?? t.thumbnailRail.overviewAria}
                 </TooltipContent>
               </Tooltip>
             )}
@@ -412,6 +444,8 @@ function HorizontalVirtualThumbList({
   onSelect,
   scale,
   thumbWidth,
+  canvasWidth,
+  canvasHeight,
 }: {
   pages: Page[];
   design?: DesignSystem;
@@ -421,6 +455,8 @@ function HorizontalVirtualThumbList({
   onSelect: (index: number) => void;
   scale: number;
   thumbWidth: number;
+  canvasWidth: number;
+  canvasHeight: number;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLElement | null>(null);
@@ -521,7 +557,15 @@ function HorizontalVirtualThumbList({
           )}
           style={{ width: thumbWidth, height: HORIZONTAL_THUMB_HEIGHT }}
         >
-          <SlideCanvas scale={scale} center={false} flat freezeMotion design={design}>
+          <SlideCanvas
+            scale={scale}
+            center={false}
+            flat
+            freezeMotion
+            design={design}
+            canvasWidth={canvasWidth}
+            canvasHeight={canvasHeight}
+          >
             <SlidePageProvider index={i} total={pages.length}>
               <PageComp />
             </SlidePageProvider>
@@ -740,6 +784,8 @@ function ThumbContents({
   thumbWidth,
   height,
   moduleTransition,
+  canvasWidth,
+  canvasHeight,
 }: {
   index: number;
   total: number;
@@ -750,6 +796,8 @@ function ThumbContents({
   thumbWidth: number;
   height: number;
   moduleTransition?: SlideTransition;
+  canvasWidth: number;
+  canvasHeight: number;
 }) {
   const t = useLocale();
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -796,7 +844,15 @@ function ThumbContents({
         )}
         style={{ width: thumbWidth, height }}
       >
-        <SlideCanvas scale={scale} center={false} flat freezeMotion design={design}>
+        <SlideCanvas
+          scale={scale}
+          center={false}
+          flat
+          freezeMotion
+          design={design}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
+        >
           <SlidePageProvider index={index} total={total}>
             <PageComp />
           </SlidePageProvider>
@@ -921,15 +977,7 @@ function SortableRail({
   );
 }
 
-function SortableThumb({
-  index,
-  active,
-  activeRef,
-  onSelect,
-  ariaLabel,
-  children,
-  ...rest
-}: {
+type SortableThumbProps = {
   index: number;
   active: boolean;
   activeRef: React.MutableRefObject<HTMLButtonElement | null> | undefined;
@@ -939,7 +987,12 @@ function SortableThumb({
 } & Omit<
   React.ButtonHTMLAttributes<HTMLButtonElement>,
   'onClick' | 'aria-label' | 'aria-current' | 'type' | 'style' | 'className' | 'ref' | 'children'
->) {
+>;
+
+const SortableThumb = forwardRef<HTMLButtonElement, SortableThumbProps>(function SortableThumb(
+  { index, active, activeRef, onSelect, ariaLabel, children, ...rest },
+  forwardedRef,
+) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: index + 1,
     transition: { duration: 180, easing: 'var(--ease-swift)' },
@@ -948,6 +1001,8 @@ function SortableThumb({
   const setRef = (node: HTMLButtonElement | null) => {
     setNodeRef(node);
     if (activeRef) activeRef.current = node;
+    if (typeof forwardedRef === 'function') forwardedRef(node);
+    else if (forwardedRef) forwardedRef.current = node;
   };
 
   const yOnlyTransform = transform ? { ...transform, x: 0 } : transform;
@@ -975,4 +1030,4 @@ function SortableThumb({
       {children}
     </button>
   );
-}
+});

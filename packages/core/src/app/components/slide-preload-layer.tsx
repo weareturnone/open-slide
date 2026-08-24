@@ -14,6 +14,8 @@ type Props = {
   /** Also warm the page at `index` — for use while no page is live yet. */
   includeCurrent?: boolean;
   onDone?: () => void;
+  canvasWidth?: number;
+  canvasHeight?: number;
 };
 
 // Per-document registry so a deck gates the UI on its first open only —
@@ -73,7 +75,15 @@ function computeWarmupOrder(pages: Page[], index: number, includeCurrent: boolea
  * boxes trigger background-image loads), and the whole layer unmounts once
  * fonts and images have settled — by then everything sits in the HTTP cache.
  */
-export function SlidePreloadLayer({ pages, index, design, includeCurrent = false, onDone }: Props) {
+export function SlidePreloadLayer({
+  pages,
+  index,
+  design,
+  includeCurrent = false,
+  onDone,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+}: Props) {
   // Warm-up order is captured on mount, not on every index change — later
   // navigation must not restart the sequence. But the deck itself can change
   // under a reused component instance (a client-side slide switch keeps this
@@ -164,8 +174,8 @@ export function SlidePreloadLayer({ pages, index, design, includeCurrent = false
               position: 'absolute',
               top: 0,
               left: 0,
-              width: CANVAS_WIDTH,
-              height: CANVAS_HEIGHT,
+              width: canvasWidth,
+              height: canvasHeight,
             }}
           >
             <SlidePageProvider index={pageIndex} total={pages.length}>
