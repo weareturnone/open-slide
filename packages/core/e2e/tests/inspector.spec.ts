@@ -59,6 +59,36 @@ test.describe('inspector editing', () => {
     await expect.poll(() => readSlideSource('insp-save')).toContain('Edited via inspector');
   });
 
+  test('a rejected save stays dirty and never reports success', async ({ page, request }) => {
+    await openEditable(page, request, 'insp-save-rejected');
+    await page.getByTitle('Inspect').click();
+    await editorCanvas(page).getByText('Editable headline').click();
+
+    await page
+      .locator('aside[data-inspector-ui]')
+      .getByPlaceholder('Element text')
+      .fill('This edit must remain pending');
+
+    await page.route('**/__edit/batch', async (route) => {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Draft branch diverged from main' }),
+      });
+    });
+    const rejected = page.waitForResponse(
+      (res) => res.url().includes('/__edit/batch') && res.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Save' }).click();
+    expect((await rejected).status()).toBe(409);
+
+    await page.waitForTimeout(50);
+    expect(await page.getByText('Saved', { exact: true }).isVisible()).toBe(false);
+    await expect(page.getByText("Couldn't save:")).toBeVisible();
+    await expect(page.getByText('1 unsaved change')).toBeVisible();
+    await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
+  });
+
   test('discard reverts the edit without touching the file', async ({ page, request }) => {
     await openEditable(page, request, 'insp-discard');
     await page.getByTitle('Inspect').click();
@@ -121,6 +151,33 @@ test.describe('inspector editing', () => {
     const src = await readSlideSource('insp-style');
     expect(src).toContain('fontWeight');
     expect(src).toContain('fontStyle');
+  });
+
+  test('an image crop survives saving and reloading', async ({ page, request }) => {
+    await openEditable(page, request, 'insp-crop');
+    await page.getByTitle('Inspect').click();
+    await editorCanvas(page).getByAltText('Crop target').click();
+
+    const panel = page.locator('aside[data-inspector-ui]');
+    await panel.getByRole('button', { name: 'Crop…' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Crop image' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await expect(page.getByText('1 unsaved change')).toBeVisible();
+
+    const saved = page.waitForResponse(
+      (res) => res.url().includes('/__edit') && res.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Save' }).click();
+    expect((await saved).status()).toBe(200);
+    await expect.poll(() => readSlideSource('insp-crop')).toContain('objectViewBox');
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    const persistedCrop = await editorCanvas(page)
+      .getByAltText('Crop target')
+      .evaluate((image) => (image as HTMLImageElement).style.getPropertyValue('object-view-box'));
+    expect(persistedCrop).toMatch(/^inset\(/);
   });
 
   test('undo and redo step through an inspector edit', async ({ page, request }) => {
