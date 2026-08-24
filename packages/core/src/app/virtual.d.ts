@@ -21,6 +21,7 @@ declare module 'virtual:open-slide/config' {
     version: string;
     authoring?: {
       enabled?: boolean;
+      readOnly?: boolean;
       publish?: {
         statusEndpoint: string;
         publishEndpoint: string;

@@ -1111,6 +1111,56 @@ export function planAssetImport(
   return { identifier, importSplice: { from: insertAt, to: insertAt, text: prefix + importStmt } };
 }
 
+export type AssetDependency = {
+  symbol: string;
+  path: string;
+};
+
+export type ApplyAssetDependenciesResult =
+  | { ok: true; source: string; identifiers: Record<string, string> }
+  | { ok: false; error: string };
+
+/**
+ * Resolve a trusted catalog fragment's private asset symbols and insert all
+ * required imports as one in-memory transform. Callers write only the final
+ * source, so a bad dependency cannot leave a partial import behind.
+ */
+export function applyAssetDependenciesInSource(
+  source: string,
+  dependencies: readonly AssetDependency[],
+): ApplyAssetDependenciesResult {
+  const symbols = new Set<string>();
+  for (const dependency of dependencies) {
+    if (!/^__[A-Z][A-Z0-9_]*__$/.test(dependency.symbol)) {
+      return { ok: false, error: 'asset dependency symbol is invalid' };
+    }
+    if (!dependency.path.startsWith('@assets/') || dependency.path.includes('..')) {
+      return { ok: false, error: 'catalog asset dependencies must use a trusted @assets path' };
+    }
+    if (symbols.has(dependency.symbol)) {
+      return { ok: false, error: 'asset dependency symbols must be unique' };
+    }
+    symbols.add(dependency.symbol);
+  }
+
+  let next = source;
+  const identifiers: Record<string, string> = {};
+  for (const dependency of dependencies) {
+    const ast = parseSource(next);
+    if (!ast) return { ok: false, error: 'source could not be parsed for asset imports' };
+    const plan = planAssetImport(ast, dependency.path);
+    identifiers[dependency.symbol] = plan.identifier;
+    if (plan.importSplice) {
+      next = `${next.slice(0, plan.importSplice.from)}${plan.importSplice.text}${next.slice(plan.importSplice.to)}`;
+    }
+  }
+
+  for (const dependency of dependencies) {
+    next = next.split(dependency.symbol).join(identifiers[dependency.symbol]);
+  }
+  return { ok: true, source: next, identifiers };
+}
+
 function planAssetAttr(
   ast: t.File,
   element: t.JSXElement,

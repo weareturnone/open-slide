@@ -13,6 +13,8 @@ export type OpenSlideAuthoringConfig = {
    * HTTP contracts when this is enabled.
    */
   enabled?: boolean;
+  /** Keep authoring UI inspectable while every mutation remains disabled. */
+  readOnly?: boolean;
   publish?: {
     statusEndpoint: string;
     publishEndpoint: string;

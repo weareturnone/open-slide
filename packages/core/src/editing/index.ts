@@ -1,11 +1,14 @@
 export type {
+  ApplyAssetDependenciesResult,
   ApplyEditBatchResult,
   ApplyEditResult,
+  AssetDependency,
   EditOp,
   SourceEdit,
   Splice,
 } from './edit-ops.ts';
 export {
+  applyAssetDependenciesInSource,
   applyEdit,
   applyEditBatch,
   formatJsxAttrValue,

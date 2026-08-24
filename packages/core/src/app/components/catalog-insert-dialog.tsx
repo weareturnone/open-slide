@@ -2,6 +2,8 @@ import config from 'virtual:open-slide/config';
 import { Loader2, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { CatalogPreview, type CatalogPreviewEntry } from '@/components/catalog-preview';
+import { useHostedOperation } from '@/components/hosted-operation-provider';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -11,21 +13,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  deployedStudioUrl,
-  publishHostedDraft,
-  waitForHostedDeployment,
-} from '@/lib/hosted-deployment';
+import { authoringReadOnly } from '@/lib/authoring';
+import { deployedStudioUrl } from '@/lib/hosted-deployment';
 import type { ContentKind } from '@/lib/sdk';
 import { cn } from '@/lib/utils';
 
-type CatalogEntry = {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  accent: string;
-};
+type CatalogEntry = CatalogPreviewEntry;
 
 const catalogConfig = config.authoring?.catalog;
 const publishConfig = config.authoring?.publish;
@@ -45,6 +38,7 @@ export function CatalogInsertDialog({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const { runStructuralMutation, structuralLocked } = useHostedOperation();
 
   useEffect(() => {
     if (index === null || !catalogConfig) return;
@@ -69,19 +63,16 @@ export function CatalogInsertDialog({
     setPreparing(true);
     try {
       const endpoint = import.meta.env.DEV ? '/__catalog' : catalogConfig.insertEndpoint;
-      const insertResponse = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, index, templateId: selectedId, kind }),
-      });
-      const inserted = (await insertResponse.json().catch(() => ({}))) as {
-        error?: string;
-        commitSha?: string;
-      };
-      if (!insertResponse.ok) {
-        throw new Error(inserted.error ?? `Insert failed with ${insertResponse.status}`);
-      }
       if (import.meta.env.DEV) {
+        const insertResponse = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ slideId, index, templateId: selectedId, kind }),
+        });
+        const inserted = (await insertResponse.json().catch(() => ({}))) as { error?: string };
+        if (!insertResponse.ok) {
+          throw new Error(inserted.error ?? `Insert failed with ${insertResponse.status}`);
+        }
         toast.success(`${kind === 'document' ? 'Page' : 'Slide'} inserted.`);
         setPreparing(false);
         onClose();
@@ -90,17 +81,32 @@ export function CatalogInsertDialog({
         window.location.assign(url);
         return;
       }
-      if (!inserted.commitSha || !publishConfig) {
-        throw new Error('Insert response did not include a commit');
-      }
-      const targetSha = await publishHostedDraft(publishConfig, inserted.commitSha);
-      toast.success(`${kind === 'document' ? 'Page' : 'Slide'} inserted. Deploying now.`);
-      setPreparing(false);
-      onClose();
-      await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
+      const hosted = await runStructuralMutation<Record<string, unknown>>({
+        label: `Insert ${kind === 'document' ? 'page' : 'slide'}`,
+        endpoint,
+        method: 'POST',
+        body: { slideId, index, templateId: selectedId, kind },
+        onCommitted: () => {
+          setPreparing(false);
+          onClose();
+        },
+        destination: (_result, status) => {
+          const url = new URL(window.location.href);
+          const resolved = status.resolvedPageIndex ?? index;
+          url.searchParams.set('p', String(resolved + 1));
+          return url;
+        },
+      });
       const url = new URL(window.location.href);
-      url.searchParams.set('p', String(index + 1));
-      window.location.assign(deployedStudioUrl(url, targetSha));
+      const resolved = hosted.status.resolvedPageIndex ?? index;
+      url.searchParams.set('p', String(resolved + 1));
+      window.location.assign(
+        deployedStudioUrl(
+          url,
+          hosted.status.operation.targetMainSha,
+          hosted.status.operation.operationId,
+        ),
+      );
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
       setPreparing(false);
@@ -119,47 +125,48 @@ export function CatalogInsertDialog({
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="grid max-h-[58vh] grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+          <div
+            className="grid max-h-[58vh] grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2"
+            role="radiogroup"
+            aria-label={`Choose a ${kind === 'document' ? 'page' : 'slide'} layout`}
+          >
             {entries.map((entry) => (
-              <button
+              <label
                 key={entry.id}
-                type="button"
-                disabled={preparing}
-                onClick={() => setSelectedId(entry.id)}
                 className={cn(
-                  'rounded-lg border bg-card p-2 text-left outline-none transition-colors',
+                  'cursor-pointer rounded-lg border bg-card p-2 text-left outline-none transition-colors focus-within:ring-2 focus-within:ring-ring/40',
+                  (preparing || structuralLocked || authoringReadOnly) &&
+                    'cursor-not-allowed opacity-50',
                   selectedId === entry.id
                     ? 'border-brand ring-1 ring-brand'
                     : 'border-hairline hover:border-foreground/30',
                 )}
               >
-                <span
-                  className={cn(
-                    'mb-3 grid place-items-center rounded-md border border-white/10 bg-[#0d0f64] text-center text-lg font-semibold text-white',
-                    kind === 'document' ? 'mx-auto max-h-52 w-full' : 'aspect-video',
-                  )}
-                  style={{
-                    boxShadow: `inset 0 -5px 0 ${entry.accent}`,
-                    ...(kind === 'document' ? { aspectRatio: '794 / 1123' } : {}),
-                  }}
-                >
-                  {entry.name}
-                </span>
+                <input
+                  type="radio"
+                  name="catalog-template"
+                  value={entry.id}
+                  checked={selectedId === entry.id}
+                  disabled={preparing || structuralLocked || authoringReadOnly}
+                  onChange={() => setSelectedId(entry.id)}
+                  className="sr-only"
+                />
+                <CatalogPreview entry={entry} document={kind === 'document'} className="mb-3" />
                 <span className="block text-sm font-medium">{entry.name}</span>
                 <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
                   {entry.description}
                 </span>
-              </button>
+              </label>
             ))}
           </div>
         )}
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" disabled={preparing} onClick={onClose}>
             {preparing ? 'Close' : 'Cancel'}
           </Button>
           <Button
             variant="brand"
-            disabled={!selectedId || loading || preparing}
+            disabled={!selectedId || loading || preparing || structuralLocked || authoringReadOnly}
             onClick={() => void insert()}
           >
             {preparing ? (
@@ -168,7 +175,7 @@ export function CatalogInsertDialog({
               <Plus className="size-3.5" />
             )}
             {preparing
-              ? `Preparing ${kind === 'document' ? 'page' : 'slide'}`
+              ? `Saving ${kind === 'document' ? 'page' : 'slide'}`
               : `Insert ${kind === 'document' ? 'page' : 'slide'}`}
           </Button>
         </DialogFooter>

@@ -2,6 +2,7 @@ import { Menu } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { HostedOperationStatusBar } from '@/components/hosted-operation-provider';
 import { LanguageToggle } from '@/components/language-toggle';
 import { ThemeToggle } from '@/components/theme-toggle';
 import {
@@ -249,6 +250,8 @@ export function HomeShell() {
             </DropdownMenu>
           </div>
         </div>
+
+        <HostedOperationStatusBar />
 
         <div
           className={cn(

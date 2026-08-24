@@ -2,6 +2,8 @@ import config from 'virtual:open-slide/config';
 import { Loader2, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { CatalogPreview, type CatalogPreviewEntry } from '@/components/catalog-preview';
+import { useHostedOperation } from '@/components/hosted-operation-provider';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,21 +14,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  deployedStudioUrl,
-  publishHostedDraft,
-  waitForHostedDeployment,
-} from '@/lib/hosted-deployment';
+import { authoringReadOnly } from '@/lib/authoring';
+import { deployedStudioUrl } from '@/lib/hosted-deployment';
 import type { ContentKind } from '@/lib/sdk';
+import { cn } from '@/lib/utils';
 
-type CatalogEntry = { id: string; name: string; description: string };
+type CatalogEntry = CatalogPreviewEntry;
 
 const catalogConfig = config.authoring?.catalog;
 const deckConfig = config.authoring?.decks;
@@ -56,6 +49,7 @@ export function NewDeckDialog({
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const [templateId, setTemplateId] = useState('');
   const [creating, setCreating] = useState(false);
+  const { runStructuralMutation, structuralLocked } = useHostedOperation();
 
   useEffect(() => {
     if (!open || !catalogConfig) return;
@@ -78,34 +72,35 @@ export function NewDeckDialog({
     setCreating(true);
     try {
       const endpoint = import.meta.env.DEV ? '/__decks' : deckConfig.createEndpoint;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), deckId, templateId, kind }),
-      });
-      const created = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        commitSha?: string;
-      };
-      if (!response.ok) throw new Error(created.error ?? `Create failed with ${response.status}`);
       if (import.meta.env.DEV) {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: title.trim(), deckId, templateId, kind }),
+        });
+        const created = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) throw new Error(created.error ?? `Create failed with ${response.status}`);
         toast.success(`${kind === 'document' ? 'Document' : 'Deck'} created.`);
         setCreating(false);
         onClose();
         window.location.assign(`/${kind === 'document' ? 'd' : 's'}/${encodeURIComponent(deckId)}`);
         return;
       }
-      if (!created.commitSha || !publishConfig) {
-        throw new Error('Create response did not include a commit');
-      }
-      const targetSha = await publishHostedDraft(publishConfig, created.commitSha);
-      toast.success(`${kind === 'document' ? 'Document' : 'Deck'} created. Deploying now.`);
-      setCreating(false);
-      onClose();
-      await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
+      const hosted = await runStructuralMutation<Record<string, unknown>>({
+        label: `Create ${kind === 'document' ? 'document' : 'deck'}`,
+        endpoint,
+        method: 'POST',
+        body: { title: title.trim(), deckId, templateId, kind },
+        onCommitted: () => {
+          setCreating(false);
+          onClose();
+        },
+        destination: () => `/${kind === 'document' ? 'd' : 's'}/${encodeURIComponent(deckId)}`,
+      });
       const url = deployedStudioUrl(
         `/${kind === 'document' ? 'd' : 's'}/${encodeURIComponent(deckId)}`,
-        targetSha,
+        hosted.status.operation.targetMainSha,
+        hosted.status.operation.operationId,
       );
       window.location.assign(url.toString());
     } catch (error) {
@@ -154,34 +149,58 @@ export function NewDeckDialog({
               placeholder="project-proposal"
             />
           </label>
-          <div className="block space-y-1.5 text-sm">
+          <div className="block space-y-2 text-sm">
             <span className="font-medium">Starting layout</span>
-            <Select
-              items={Object.fromEntries(entries.map((entry) => [entry.id, entry.name]))}
-              value={templateId}
-              onValueChange={(value) => setTemplateId(value ?? '')}
-              disabled={creating}
+            <div
+              className="grid max-h-[38vh] grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2"
+              role="radiogroup"
+              aria-label="Starting layout"
             >
-              <SelectTrigger aria-label="Starting layout" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {entries.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {entries.map((entry) => (
+                <label
+                  key={entry.id}
+                  className={cn(
+                    'cursor-pointer rounded-lg border bg-card p-2 text-left outline-none transition-colors focus-within:ring-2 focus-within:ring-ring/40',
+                    (creating || structuralLocked || authoringReadOnly) &&
+                      'cursor-not-allowed opacity-50',
+                    templateId === entry.id
+                      ? 'border-brand ring-1 ring-brand'
+                      : 'border-hairline hover:border-foreground/30',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="new-deck-template"
+                    value={entry.id}
+                    checked={templateId === entry.id}
+                    disabled={creating || structuralLocked || authoringReadOnly}
+                    onChange={() => setTemplateId(entry.id)}
+                    className="sr-only"
+                  />
+                  <CatalogPreview entry={entry} document={kind === 'document'} className="mb-2" />
+                  <span className="block text-sm font-medium">{entry.name}</span>
+                  <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                    {entry.description}
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" disabled={creating} onClick={onClose}>
             {creating ? 'Close' : 'Cancel'}
           </Button>
           <Button
             variant="brand"
-            disabled={!title.trim() || deckId.length < 3 || !templateId || creating}
+            disabled={
+              !title.trim() ||
+              deckId.length < 3 ||
+              !templateId ||
+              creating ||
+              structuralLocked ||
+              authoringReadOnly
+            }
             onClick={() => void create()}
           >
             {creating ? (

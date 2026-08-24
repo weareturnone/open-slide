@@ -32,11 +32,12 @@ type CatalogEntry = {
 type CatalogModule = {
   publicCatalog: (kind: ContentKind) => Array<Omit<CatalogEntry, 'source'>>;
   findCatalogEntry: (id: string, kind: ContentKind) => CatalogEntry | null;
-  createDeckSource: (input: {
-    title: string;
-    template: CatalogEntry;
-    kind: ContentKind;
-  }) => string;
+  createDeckSource: (input: { title: string; template: CatalogEntry; kind: ContentKind }) => string;
+  resolveCatalogInsertion: (
+    source: string,
+    template: CatalogEntry,
+    componentSource: string,
+  ) => { ok: true; source: string; componentSource: string } | { ok: false; error: string };
 };
 
 const RESERVED_IDS = new Set(['api', 'assets', 'documents', 'studio', 'themes']);
@@ -51,7 +52,9 @@ async function loadCatalog(ctx: ApiContext): Promise<CatalogModule | null> {
   if (!modulePath.startsWith(`${ctx.userCwd}${path.sep}`)) return null;
   try {
     const stat = await fs.stat(modulePath);
-    return (await import(`${pathToFileURL(modulePath).href}?mtime=${stat.mtimeMs}`)) as CatalogModule;
+    return (await import(
+      `${pathToFileURL(modulePath).href}?mtime=${stat.mtimeMs}`
+    )) as CatalogModule;
   } catch {
     return null;
   }
@@ -75,7 +78,9 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
     if (!catalog) return json(res, 404, { error: 'Local catalog is not configured' });
 
     if (url.pathname === '/__catalog' && req.method === 'GET') {
-      return json(res, 200, { entries: catalog.publicCatalog(normalizeKind(url.searchParams.get('kind'))) });
+      return json(res, 200, {
+        entries: catalog.publicCatalog(normalizeKind(url.searchParams.get('kind'))),
+      });
     }
     if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
 
@@ -127,7 +132,14 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
       const current = await fs.readFile(sourcePath, 'utf8');
       const name = componentName(template.id);
       const componentSource = template.source.replace('__COMPONENT__', name);
-      const withPage = insertPageComponentInSource(current, name, componentSource, index as number);
+      const dependencies = catalog.resolveCatalogInsertion(current, template, componentSource);
+      if (!dependencies.ok) return json(res, 422, { error: dependencies.error });
+      const withPage = insertPageComponentInSource(
+        dependencies.source,
+        name,
+        dependencies.componentSource,
+        index as number,
+      );
       if (withPage === null) {
         return json(res, 422, { error: 'This content cannot accept the selected catalog page' });
       }

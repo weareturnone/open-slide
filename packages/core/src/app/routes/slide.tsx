@@ -22,6 +22,10 @@ import { toast } from 'sonner';
 import { AssetView } from '@/components/asset-view';
 import { CatalogInsertDialog } from '@/components/catalog-insert-dialog';
 import { HistoryProvider } from '@/components/history-provider';
+import {
+  HostedOperationStatusBar,
+  useHostedOperation,
+} from '@/components/hosted-operation-provider';
 import { HostedPublishButton } from '@/components/hosted-publish-button';
 import { CommentWidget } from '@/components/inspector/comment-widget';
 import { InspectOverlay } from '@/components/inspector/inspect-overlay';
@@ -62,10 +66,16 @@ import { SlideCanvas } from '../components/slide-canvas';
 import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/slide-preload-layer';
 import { SlideTransitionLayer } from '../components/slide-transition-layer';
 import { type ThumbnailActions, ThumbnailRail } from '../components/thumbnail-rail';
-import { authoringEnabled, notifyAuthoringChanged } from '../lib/authoring';
+import {
+  authoringEnabled,
+  authoringWritable,
+  notifyAuthoringChanged,
+  pageComponentIdentities,
+} from '../lib/authoring';
 import { exportSlideAsHtml } from '../lib/export-html';
 import { exportSlideAsPdf, isSafari } from '../lib/export-pdf';
 import { exportSlideAsImagePptx } from '../lib/export-pptx';
+import { deployedStudioUrl } from '../lib/hosted-deployment';
 import { remapNotesSessionCacheAfterReorder } from '../lib/inspector/use-notes';
 import { type ContentKind, canvasSizeFor, type SlideModule } from '../lib/sdk';
 import { usePrefersReducedMotion } from '../lib/use-prefers-reduced-motion';
@@ -101,6 +111,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [catalogInsertIndex, setCatalogInsertIndex] = useState<number | null>(null);
+  const { runStructuralMutation, structuralLocked } = useHostedOperation();
   const [, setWarmedTick] = useState(0);
   const handleAssetsWarmed = useCallback(() => {
     markDeckWarmed(warmKey);
@@ -125,6 +136,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
     setPages(modulePages);
   }, [modulePages]);
   const pageCount = pages.length;
+  const componentIds = useMemo(() => pageComponentIdentities(pages), [pages]);
   const rawIndex = Number(searchParams.get('p') ?? '1') - 1;
   const index = Number.isFinite(rawIndex) ? Math.max(0, Math.min(pageCount - 1, rawIndex)) : 0;
   const view = searchParams.get('view') === 'assets' ? 'assets' : 'slides';
@@ -186,16 +198,45 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       if (nextIndex !== index) goTo(nextIndex);
 
       try {
-        const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`, {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ order }),
-        });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(detail.error ?? `HTTP ${res.status}`);
+        if (!componentIds) throw new Error('Page component identities are unavailable');
+        const orderedComponentIds = order.map((position) => componentIds[position]);
+        if (import.meta.env.DEV) {
+          const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              order,
+              componentIds: orderedComponentIds,
+              focusIndex: nextIndex,
+            }),
+          });
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(detail.error ?? `HTTP ${res.status}`);
+          }
+          notifyAuthoringChanged();
+          return;
         }
-        notifyAuthoringChanged();
+        const hosted = await runStructuralMutation<Record<string, unknown>>({
+          label: `Reorder ${isDocument ? 'pages' : 'slides'}`,
+          endpoint: `/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`,
+          method: 'PUT',
+          body: { order, componentIds: orderedComponentIds, focusIndex: nextIndex },
+          destination: () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('p', String(nextIndex + 1));
+            return url;
+          },
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? nextIndex) + 1));
+        window.location.assign(
+          deployedStudioUrl(
+            url,
+            hosted.status.operation.targetMainSha,
+            hosted.status.operation.operationId,
+          ),
+        );
       } catch (err) {
         setPages(before);
         const inverse = order.map((_, i) => order.indexOf(i));
@@ -203,7 +244,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         toast.error(`Reorder failed: ${String((err as Error).message ?? err)}`);
       }
     },
-    [pages, index, slideId, goTo, kindQuery],
+    [pages, index, slideId, goTo, kindQuery, componentIds, runStructuralMutation, isDocument],
   );
 
   const duplicatePage = useCallback(
@@ -216,16 +257,40 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       if (index > i) goTo(index + 1);
 
       try {
-        const res = await fetch(
-          `/__slides/${encodeURIComponent(slideId)}/pages/${i}/duplicate${kindQuery}`,
-          { method: 'POST' },
-        );
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(detail.error ?? `HTTP ${res.status}`);
+        if (!componentIds) throw new Error('Page component identities are unavailable');
+        if (import.meta.env.DEV) {
+          const res = await fetch(
+            `/__slides/${encodeURIComponent(slideId)}/pages/${i}/duplicate${kindQuery}`,
+            { method: 'POST' },
+          );
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(detail.error ?? `HTTP ${res.status}`);
+          }
+          notifyAuthoringChanged();
+          toast.success(format(t.thumbnailRail.toastDuplicated, { n: i + 1 }));
+          return;
         }
-        notifyAuthoringChanged();
-        toast.success(format(t.thumbnailRail.toastDuplicated, { n: i + 1 }));
+        const hosted = await runStructuralMutation<Record<string, unknown>>({
+          label: `Duplicate ${isDocument ? 'page' : 'slide'}`,
+          endpoint: `/__slides/${encodeURIComponent(slideId)}/pages/${i}/duplicate${kindQuery}`,
+          method: 'POST',
+          body: { componentId: componentIds[i] },
+          destination: () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('p', String(i + 2));
+            return url;
+          },
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? i + 1) + 1));
+        window.location.assign(
+          deployedStudioUrl(
+            url,
+            hosted.status.operation.targetMainSha,
+            hosted.status.operation.operationId,
+          ),
+        );
       } catch (err) {
         setPages(before);
         toast.error(
@@ -233,7 +298,17 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         );
       }
     },
-    [pages, index, slideId, goTo, kindQuery, t.thumbnailRail],
+    [
+      pages,
+      index,
+      slideId,
+      goTo,
+      kindQuery,
+      t.thumbnailRail,
+      componentIds,
+      runStructuralMutation,
+      isDocument,
+    ],
   );
 
   const deletePage = useCallback(
@@ -248,15 +323,45 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       }
 
       try {
-        const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/pages/${i}${kindQuery}`, {
-          method: 'DELETE',
-        });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(detail.error ?? `HTTP ${res.status}`);
+        if (!componentIds) throw new Error('Page component identities are unavailable');
+        if (import.meta.env.DEV) {
+          const res = await fetch(
+            `/__slides/${encodeURIComponent(slideId)}/pages/${i}${kindQuery}`,
+            {
+              method: 'DELETE',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ componentId: componentIds[i] }),
+            },
+          );
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(detail.error ?? `HTTP ${res.status}`);
+          }
+          notifyAuthoringChanged();
+          toast.success(format(t.thumbnailRail.toastDeleted, { n: i + 1 }));
+          return;
         }
-        notifyAuthoringChanged();
-        toast.success(format(t.thumbnailRail.toastDeleted, { n: i + 1 }));
+        const focusIndex = Math.max(0, Math.min(i, nextPages.length - 1));
+        const hosted = await runStructuralMutation<Record<string, unknown>>({
+          label: `Delete ${isDocument ? 'page' : 'slide'}`,
+          endpoint: `/__slides/${encodeURIComponent(slideId)}/pages/${i}${kindQuery}`,
+          method: 'DELETE',
+          body: { componentId: componentIds[i] },
+          destination: () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('p', String(focusIndex + 1));
+            return url;
+          },
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? focusIndex) + 1));
+        window.location.assign(
+          deployedStudioUrl(
+            url,
+            hosted.status.operation.targetMainSha,
+            hosted.status.operation.operationId,
+          ),
+        );
       } catch (err) {
         setPages(before);
         toast.error(
@@ -264,18 +369,28 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         );
       }
     },
-    [pages, index, slideId, goTo, kindQuery, t.thumbnailRail],
+    [
+      pages,
+      index,
+      slideId,
+      goTo,
+      kindQuery,
+      t.thumbnailRail,
+      componentIds,
+      runStructuralMutation,
+      isDocument,
+    ],
   );
 
   const thumbnailActions = useMemo<ThumbnailActions | undefined>(
     () =>
-      authoringEnabled
+      authoringWritable && !structuralLocked
         ? {
             onDuplicate: duplicatePage,
             onDelete: deletePage,
           }
         : undefined,
-    [duplicatePage, deletePage],
+    [duplicatePage, deletePage, structuralLocked],
   );
 
   useEffect(() => {
@@ -820,6 +935,8 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
             </div>
           </header>
 
+          <HostedOperationStatusBar />
+
           {view === 'assets' ? (
             <div className="min-h-0 flex-1">
               <AssetView slideId={slideId} kind={kind} />
@@ -833,7 +950,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
                     design={slide.design}
                     current={index}
                     onSelect={goTo}
-                    onReorder={authoringEnabled ? reorderPage : undefined}
+                    onReorder={authoringWritable && !structuralLocked ? reorderPage : undefined}
                     actions={thumbnailActions}
                     moduleTransition={slide.transition}
                     onOverview={() => setOverviewOpen(true)}

@@ -1,5 +1,6 @@
 import config from 'virtual:open-slide/config';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { HostedOperationProvider } from './components/hosted-operation-provider';
 import { Toaster } from './components/ui/sonner';
 import { TooltipProvider } from './components/ui/tooltip';
 import { useLocale } from './lib/use-locale';
@@ -13,27 +14,29 @@ import { ThemeDetailPage, ThemesGalleryPage } from './routes/themes';
 export function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
-      {/* One app-wide provider so adjacent tooltips group: after the first
-          opens, moving along a toolbar shows the rest instantly. */}
-      <TooltipProvider delay={200}>
-        <Routes>
-          {config.build.showSlideBrowser ? (
-            <Route element={<HomeShell />}>
-              <Route path="/" element={<Home />} />
-              <Route path="/documents" element={<Home kind="document" />} />
-              <Route path="/themes" element={<ThemesGalleryPage />} />
-              <Route path="/themes/:themeId" element={<ThemeDetailPage />} />
-              <Route path="/assets" element={<AssetsPage />} />
-            </Route>
-          ) : (
-            <Route path="/" element={<NotFound />} />
-          )}
-          <Route path="/s/:slideId" element={<Slide />} />
-          <Route path="/d/:slideId" element={<Slide kind="document" />} />
-          <Route path="/s/:slideId/presenter" element={<Presenter />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </TooltipProvider>
+      <HostedOperationProvider>
+        {/* One app-wide provider so adjacent tooltips group: after the first
+            opens, moving along a toolbar shows the rest instantly. */}
+        <TooltipProvider delay={200}>
+          <Routes>
+            {config.build.showSlideBrowser ? (
+              <Route element={<HomeShell />}>
+                <Route path="/" element={<Home />} />
+                <Route path="/documents" element={<Home kind="document" />} />
+                <Route path="/themes" element={<ThemesGalleryPage />} />
+                <Route path="/themes/:themeId" element={<ThemeDetailPage />} />
+                <Route path="/assets" element={<AssetsPage />} />
+              </Route>
+            ) : (
+              <Route path="/" element={<NotFound />} />
+            )}
+            <Route path="/s/:slideId" element={<Slide />} />
+            <Route path="/d/:slideId" element={<Slide kind="document" />} />
+            <Route path="/s/:slideId/presenter" element={<Presenter />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </TooltipProvider>
+      </HostedOperationProvider>
       <Toaster />
     </BrowserRouter>
   );

@@ -2,14 +2,10 @@ import config from 'virtual:open-slide/config';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { useHistory } from '@/components/history-provider';
+import { useHostedOperation } from '@/components/hosted-operation-provider';
 import { SaveCard } from '@/components/panel/save-card';
 import { useDesignPanelState } from '@/components/style-panel/design-provider';
-import {
-  deployedStudioUrl,
-  fetchHostedVersion,
-  publishHostedDraft,
-  waitForHostedDeployment,
-} from '@/lib/hosted-deployment';
+import { fetchHostedVersion, publishHostedDraft } from '@/lib/hosted-deployment';
 import { format, plural, useLocale } from '@/lib/use-locale';
 import { useInspector } from './inspector-provider';
 
@@ -19,6 +15,7 @@ export function SaveBar() {
   const history = useHistory();
   const t = useLocale();
   const [deploying, setDeploying] = useState(false);
+  const { runDeployment, structuralLocked } = useHostedOperation();
 
   const inspectorCount = insp.pendingCount;
   const designCount = design.dirty ? 1 : 0;
@@ -28,26 +25,38 @@ export function SaveBar() {
   const committing = insp.committing || design.committing || deploying;
 
   const onSave = async () => {
-    const tasks: Promise<void>[] = [];
-    if (inspectorCount > 0) tasks.push(Promise.resolve(insp.commitEdits()));
-    if (designCount > 0) tasks.push(Promise.resolve(design.commit()));
-    try {
-      await Promise.all(tasks);
-    } catch {
-      // Providers retain failed edits and surface the concrete error.
-      // Publishing here would deploy a partial save, so stop immediately.
+    const publishConfig = config.authoring?.publish;
+    if (!publishConfig || import.meta.env.DEV) {
+      const tasks: Promise<void>[] = [];
+      if (inspectorCount > 0) tasks.push(Promise.resolve(insp.commitEdits()));
+      if (designCount > 0) tasks.push(Promise.resolve(design.commit()));
+      try {
+        await Promise.all(tasks);
+      } catch {
+        return;
+      }
       return;
     }
-    const publishConfig = config.authoring?.publish;
-    if (!publishConfig || import.meta.env.DEV) return;
     setDeploying(true);
     try {
-      const version = await fetchHostedVersion(publishConfig.statusEndpoint);
-      if (!version.hasDraftChanges) return;
-      const targetSha = await publishHostedDraft(publishConfig, version.draftSha);
-      toast.success('Saved to GitHub. Deploying now.');
-      await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha);
-      window.location.replace(deployedStudioUrl(window.location.href, targetSha).toString());
+      const deployed = await runDeployment({
+        label: 'Save edits',
+        action: async () => {
+          const tasks: Promise<void>[] = [];
+          if (inspectorCount > 0) tasks.push(Promise.resolve(insp.commitEdits()));
+          if (designCount > 0) tasks.push(Promise.resolve(design.commit()));
+          await Promise.all(tasks);
+          const version = await fetchHostedVersion(publishConfig.statusEndpoint);
+          const targetSha = version.hasDraftChanges
+            ? await publishHostedDraft(publishConfig, version.draftSha)
+            : version.mainSha;
+          return { targetSha, result: null };
+        },
+        destination: () => window.location.href,
+      });
+      const url = new URL(window.location.href);
+      url.searchParams.set('studioVersion', deployed.targetSha.slice(0, 12));
+      window.location.replace(url.toString());
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
     } finally {
@@ -64,7 +73,7 @@ export function SaveBar() {
     <SaveCard
       uiAttr="inspector"
       dirty={dirty}
-      committing={committing}
+      committing={committing || structuralLocked}
       onSave={onSave}
       onDiscard={onDiscard}
       unsavedLabel={format(plural(total, t.inspector.unsavedChanges), { count: total })}

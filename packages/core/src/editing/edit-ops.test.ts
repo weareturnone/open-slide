@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyEdit, applyEditBatch, safeAssetIdentifier } from './edit-ops.ts';
+import {
+  applyAssetDependenciesInSource,
+  applyEdit,
+  applyEditBatch,
+  safeAssetIdentifier,
+} from './edit-ops.ts';
 
 describe('applyEdit / set-style', () => {
   // Every JSX opening tag in these synthetic sources sits at column 0;
@@ -1041,6 +1046,55 @@ describe('safeAssetIdentifier', () => {
   it('appends a counter when the candidate collides with an existing name', () => {
     const taken = new Set(['logo', 'logo2']);
     expect(safeAssetIdentifier('logo.svg', taken)).toBe('logo3');
+  });
+});
+
+describe('applyAssetDependenciesInSource', () => {
+  it('inserts trusted global imports and resolves private catalog symbols', () => {
+    const result = applyAssetDependenciesInSource(
+      'const Cover = () => <img src={__TURNONE_LOGO__} />;\nexport default [Cover];\n',
+      [{ symbol: '__TURNONE_LOGO__', path: '@assets/turnone-logo-black.svg' }],
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.source).toContain(
+      "import turnoneLogoBlack from '@assets/turnone-logo-black.svg';",
+    );
+    expect(result.source).toContain('<img src={turnoneLogoBlack} />');
+    expect(result.source).not.toContain('__TURNONE_LOGO__');
+  });
+
+  it('reuses an existing import and avoids identifier collisions', () => {
+    const result = applyAssetDependenciesInSource(
+      [
+        "import turnoneLogoBlack from '@assets/other.svg';",
+        "import existingClient from '@assets/client-logo-placeholder.svg';",
+        'const Cover = () => <><img src={__TURNONE_LOGO__} /><img src={__CLIENT_LOGO__} /></>;',
+        'export default [Cover];',
+        '',
+      ].join('\n'),
+      [
+        { symbol: '__TURNONE_LOGO__', path: '@assets/turnone-logo-black.svg' },
+        { symbol: '__CLIENT_LOGO__', path: '@assets/client-logo-placeholder.svg' },
+      ],
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.source).toContain(
+      "import turnoneLogoBlack2 from '@assets/turnone-logo-black.svg';",
+    );
+    expect(result.source).toContain('<img src={turnoneLogoBlack2} />');
+    expect(result.source).toContain('<img src={existingClient} />');
+  });
+
+  it('rejects untrusted paths without returning partial source', () => {
+    const result = applyAssetDependenciesInSource('export default [];\n', [
+      { symbol: '__BAD__', path: '../private/logo.svg' },
+    ]);
+    expect(result).toEqual({
+      ok: false,
+      error: 'catalog asset dependencies must use a trusted @assets path',
+    });
   });
 });
 
