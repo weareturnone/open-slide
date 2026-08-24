@@ -84,6 +84,10 @@ export async function createViteConfig(opts: CreateViteConfigOptions): Promise<I
     },
     optimizeDeps: {
       entries: [path.join(APP_ROOT, 'main.tsx')],
+      // Deck and document modules import the public package entry. Optimizing
+      // that entry creates a second copy of the app runtime beside APP_ROOT,
+      // which splits React contexts after Vite's discovery reload.
+      exclude: ['@open-slide/core'],
       include: [
         'react',
         'react-dom',
