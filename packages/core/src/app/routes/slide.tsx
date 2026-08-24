@@ -1384,7 +1384,7 @@ function InlineTitleEditor({
     );
   }
 
-  if (!authoringEnabled) {
+  if (!authoringEnabled || !authoringWritable) {
     return (
       <div className="flex min-w-0 items-baseline justify-center">
         <h1 className="truncate font-heading text-[13.5px] font-semibold tracking-[-0.01em]">

@@ -5,6 +5,7 @@ import { useHistory } from '@/components/history-provider';
 import { useHostedOperation } from '@/components/hosted-operation-provider';
 import { SaveCard } from '@/components/panel/save-card';
 import { useDesignPanelState } from '@/components/style-panel/design-provider';
+import { authoringReadOnly } from '@/lib/authoring';
 import { fetchHostedVersion, publishHostedDraft } from '@/lib/hosted-deployment';
 import { format, plural, useLocale } from '@/lib/use-locale';
 import { useInspector } from './inspector-provider';
@@ -73,7 +74,7 @@ export function SaveBar() {
     <SaveCard
       uiAttr="inspector"
       dirty={dirty}
-      committing={committing || structuralLocked}
+      committing={committing || structuralLocked || authoringReadOnly}
       onSave={onSave}
       onDiscard={onDiscard}
       unsavedLabel={format(plural(total, t.inspector.unsavedChanges), { count: total })}

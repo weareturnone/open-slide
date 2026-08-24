@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils';
 import { FolderIconChip, SLIDE_DND_MIME } from '../components/sidebar/folder-item';
 import { ALL_SLIDES_ID, DRAFT_ID } from '../components/sidebar/sidebar';
 import { SlideCanvas } from '../components/slide-canvas';
-import { authoringEnabled } from '../lib/authoring';
+import { authoringEnabled, authoringWritable } from '../lib/authoring';
 import { SlidePageProvider } from '../lib/page-context';
 import {
   type ContentKind,
@@ -665,11 +665,11 @@ function SlideCard({
                 }
               />
               <DropdownMenuContent align="end" className="min-w-[160px]">
-                <DropdownMenuItem onClick={() => setDialog('rename')}>
+                <DropdownMenuItem disabled={!authoringWritable} onClick={() => setDialog('rename')}>
                   <Pencil />
                   {tCard.common.rename}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onDuplicate()}>
+                <DropdownMenuItem disabled={!authoringWritable} onClick={() => onDuplicate()}>
                   <Copy />
                   {tCard.home.duplicate}
                 </DropdownMenuItem>
@@ -679,7 +679,11 @@ function SlideCard({
                     {tCard.home.moveToFolder}
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem variant="destructive" onClick={() => setDialog('delete')}>
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={!authoringWritable}
+                  onClick={() => setDialog('delete')}
+                >
                   <Trash2 />
                   {tCard.common.delete}
                 </DropdownMenuItem>
