@@ -1,5 +1,5 @@
 import config from 'virtual:open-slide/config';
-import { AlertTriangle, Check, Loader2, RotateCw } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, LockKeyhole, RotateCw } from 'lucide-react';
 import {
   createContext,
   type ReactNode,
@@ -527,7 +527,25 @@ export function HostedOperationStatusBar({ className }: { className?: string }) 
     return () => window.clearInterval(timer);
   }, [state.phase, state.startedAt]);
 
-  if (state.phase === 'idle' || import.meta.env.DEV) return null;
+  if (import.meta.env.DEV) return null;
+  if (state.phase === 'idle' && authoringReadOnly) {
+    return (
+      <section
+        className={cn(
+          'flex min-h-11 flex-wrap items-center gap-3 border-b border-hairline bg-card px-4 py-2 text-[12.5px] md:px-5',
+          className,
+        )}
+        role="status"
+      >
+        <LockKeyhole className="size-4 text-muted-foreground" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <span className="font-medium">Read-only preview</span>
+          <span className="text-muted-foreground"> · Editing controls are disabled</span>
+        </div>
+      </section>
+    );
+  }
+  if (state.phase === 'idle') return null;
   const terminal = ['ready', 'failed', 'conflict'].includes(state.phase);
   const alert = ['failed', 'conflict'].includes(state.phase);
   return (

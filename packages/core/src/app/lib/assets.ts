@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { authoringEnabled, notifyAuthoringChanged } from './authoring';
+import { authoringEnabled, authoringWritable, notifyAuthoringChanged } from './authoring';
 import type { ContentKind } from './sdk';
 
 export type AssetEntry = {
@@ -101,6 +101,7 @@ export async function uploadWithAutoRename(
   file: File,
   kind: ContentKind = 'slide',
 ): Promise<{ ok: boolean; status: number; entry: AssetEntry | null }> {
+  if (!authoringWritable) return { ok: false, status: 403, entry: null };
   // Vite's default `assetsInclude` matches asset extensions case-sensitively,
   // so `<img src="./assets/foo.JPG" />` (which the placeholder edit rewrites
   // into a real `import`) fails to parse. Lowercase the extension so the
@@ -262,7 +263,7 @@ export function useAssets(slideId: string, kind: ContentKind = 'slide'): UseAsse
 
   const upload = useCallback(
     async (file: File, opts?: UploadOptions) => {
-      if (!available) return NOOP_RESULT;
+      if (!authoringWritable) return NOOP_RESULT;
       const res = await uploadAsset(slideId, file, opts, kind);
       if (res.ok) {
         notifyAuthoringChanged();
@@ -275,7 +276,7 @@ export function useAssets(slideId: string, kind: ContentKind = 'slide'): UseAsse
 
   const rename = useCallback(
     async (from: string, to: string) => {
-      if (!available) return NOOP_RESULT;
+      if (!authoringWritable) return NOOP_RESULT;
       const res = await renameAsset(slideId, from, to, kind);
       if (res.ok) {
         notifyAuthoringChanged();
@@ -288,7 +289,7 @@ export function useAssets(slideId: string, kind: ContentKind = 'slide'): UseAsse
 
   const remove = useCallback(
     async (name: string) => {
-      if (!available) return NOOP_RESULT;
+      if (!authoringWritable) return NOOP_RESULT;
       const res = await deleteAsset(slideId, name, kind);
       if (res.ok) {
         notifyAuthoringChanged();

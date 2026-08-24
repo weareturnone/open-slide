@@ -67,6 +67,7 @@ import {
   searchSvgl,
   useAssets,
 } from '@/lib/assets';
+import { authoringWritable } from '@/lib/authoring';
 import type { ContentKind } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
@@ -228,7 +229,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
   };
 
   async function handleFile(file: File) {
-    if (!available) return;
+    if (!available || !authoringWritable) return;
     if (existingNames.has(file.name)) {
       const decision = await new Promise<'replace' | 'rename' | 'cancel'>((resolve) => {
         setConflict({ file, resolve });
@@ -299,13 +300,13 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
       aria-label={t.asset.sectionAria}
       className={cn('relative flex h-full flex-col bg-background')}
       onDragEnter={(e) => {
-        if (!hasFiles(e)) return;
+        if (!authoringWritable || !hasFiles(e)) return;
         e.preventDefault();
         dragDepth.current += 1;
         setDragActive(true);
       }}
       onDragOver={(e) => {
-        if (!hasFiles(e)) return;
+        if (!authoringWritable || !hasFiles(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
       }}
@@ -314,7 +315,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
         if (dragDepth.current === 0) setDragActive(false);
       }}
       onDrop={(e) => {
-        if (!hasFiles(e)) return;
+        if (!authoringWritable || !hasFiles(e)) return;
         e.preventDefault();
         dragDepth.current = 0;
         setDragActive(false);
@@ -355,9 +356,13 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
           <button
             type="button"
             onClick={() => setLogoSearchOpen(true)}
+            disabled={!authoringWritable}
+            aria-disabled={!authoringWritable}
+            title={authoringWritable ? t.asset.searchLogos : 'Read-only preview'}
             className={cn(
               'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[5px] border border-border bg-card px-2.5 text-[12.5px] font-medium transition-colors',
               'hover:bg-muted/60 hover:border-foreground/20 active:translate-y-px',
+              !authoringWritable && 'cursor-not-allowed opacity-50',
             )}
           >
             <Search className="size-3.5" />
@@ -365,10 +370,13 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
           </button>
           <label
             htmlFor={inputId}
+            aria-disabled={!authoringWritable}
+            title={authoringWritable ? t.asset.upload : 'Read-only preview'}
             className={cn(
               'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[5px] bg-foreground px-3 text-[12.5px] font-medium text-background transition-colors',
               'shadow-[inset_0_1px_0_oklch(1_0_0/0.12),0_1px_0_oklch(0_0_0/0.12)]',
               'hover:bg-foreground/90 active:translate-y-px',
+              !authoringWritable && 'pointer-events-none cursor-not-allowed opacity-50',
             )}
           >
             <Upload className="size-3.5" />
@@ -378,6 +386,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
             id={inputId}
             type="file"
             multiple
+            disabled={!authoringWritable}
             className="sr-only"
             onChange={(e) => {
               if (e.target.files && e.target.files.length > 0) {
@@ -535,6 +544,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
                   onPreview={() => setPreview(asset)}
                   onRename={() => setRenaming(asset.name)}
                   onDelete={() => prepareDelete(asset)}
+                  writable={authoringWritable}
                 />
               ) : (
                 <AssetListItem
@@ -543,6 +553,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
                   onPreview={() => setPreview(asset)}
                   onRename={() => setRenaming(asset.name)}
                   onDelete={() => prepareDelete(asset)}
+                  writable={authoringWritable}
                 />
               ),
             )}
@@ -873,11 +884,13 @@ function AssetCard({
   onPreview,
   onRename,
   onDelete,
+  writable,
 }: {
   asset: AssetEntry;
   onPreview: () => void;
   onRename: () => void;
   onDelete: () => void;
+  writable: boolean;
 }) {
   const isImage = asset.mime.startsWith('image/');
   const t = useLocale();
@@ -924,7 +937,13 @@ function AssetCard({
             </time>
           </div>
         </div>
-        <AssetActions asset={asset} onPreview={onPreview} onRename={onRename} onDelete={onDelete} />
+        <AssetActions
+          asset={asset}
+          onPreview={onPreview}
+          onRename={onRename}
+          onDelete={onDelete}
+          writable={writable}
+        />
       </div>
     </div>
   );
@@ -935,11 +954,13 @@ function AssetListItem({
   onPreview,
   onRename,
   onDelete,
+  writable,
 }: {
   asset: AssetEntry;
   onPreview: () => void;
   onRename: () => void;
   onDelete: () => void;
+  writable: boolean;
 }) {
   const isImage = asset.mime.startsWith('image/');
   const t = useLocale();
@@ -998,7 +1019,13 @@ function AssetListItem({
       <div className="hidden w-16 shrink-0 justify-end sm:flex">
         <UsageBadge unused={asset.unused} showUsed />
       </div>
-      <AssetActions asset={asset} onPreview={onPreview} onRename={onRename} onDelete={onDelete} />
+      <AssetActions
+        asset={asset}
+        onPreview={onPreview}
+        onRename={onRename}
+        onDelete={onDelete}
+        writable={writable}
+      />
     </div>
   );
 }
@@ -1008,11 +1035,13 @@ function AssetActions({
   onPreview,
   onRename,
   onDelete,
+  writable,
 }: {
   asset: AssetEntry;
   onPreview: () => void;
   onRename: () => void;
   onDelete: () => void;
+  writable: boolean;
 }) {
   const t = useLocale();
   return (
@@ -1032,14 +1061,18 @@ function AssetActions({
           <ImageIcon />
           {t.asset.previewMenuItem}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onRename}>
-          <Pencil />
-          {t.asset.renameMenuItem}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onDelete}>
-          <Trash2 />
-          {t.asset.deleteMenuItem}
-        </DropdownMenuItem>
+        {writable ? (
+          <>
+            <DropdownMenuItem onClick={onRename}>
+              <Pencil />
+              {t.asset.renameMenuItem}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onDelete}>
+              <Trash2 />
+              {t.asset.deleteMenuItem}
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

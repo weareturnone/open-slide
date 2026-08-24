@@ -1,7 +1,7 @@
 import { type CSSProperties, type HTMLAttributes, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { uploadWithAutoRename } from '@/lib/assets';
-import { authoringEnabled } from '@/lib/authoring';
+import { authoringWritable } from '@/lib/authoring';
 import { useLocale } from '@/lib/use-locale';
 
 export type ImagePlaceholderProps = {
@@ -26,7 +26,7 @@ export function ImagePlaceholder({
   const dragDepth = useRef(0);
   const t = useLocale();
 
-  const dndProps = authoringEnabled
+  const dndProps = authoringWritable
     ? {
         onDragEnter: (e: React.DragEvent<HTMLDivElement>) => {
           if (uploading || !hasImageFile(e)) return;
@@ -148,7 +148,7 @@ export function ImagePlaceholder({
           </span>
         )}
       </div>
-      {authoringEnabled && (dragActive || uploading) && (
+      {authoringWritable && (dragActive || uploading) && (
         <DropOverlay
           label={uploading ? t.imagePlaceholder.uploading : t.imagePlaceholder.dropOverlay}
         />
