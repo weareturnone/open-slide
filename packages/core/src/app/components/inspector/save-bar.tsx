@@ -34,9 +34,9 @@ export function SaveBar() {
       try {
         await Promise.all(tasks);
       } catch {
-        return;
+        return false;
       }
-      return;
+      return true;
     }
     setDeploying(true);
     try {
@@ -58,8 +58,10 @@ export function SaveBar() {
       const url = new URL(window.location.href);
       url.searchParams.set('studioVersion', deployed.targetSha.slice(0, 12));
       window.location.replace(url.toString());
+      return true;
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
+      return false;
     } finally {
       setDeploying(false);
     }
