@@ -2,7 +2,7 @@ import path from 'node:path';
 import { parse as babelParse } from '@babel/parser';
 import * as t from '@babel/types';
 import type { Plugin } from 'vite';
-import { walkJsx } from '../editing/babel-walk.ts';
+import { walkAll, walkJsx } from '../editing/babel-walk.ts';
 
 // Inject `data-slide-loc="<line>:<col>"` onto every host JSX element in
 // slide source files so the inspector can map a click straight to a
@@ -10,11 +10,168 @@ import { walkJsx } from '../editing/babel-walk.ts';
 
 // Capitalized components that explicitly forward `data-slide-loc` to a
 // host root, so the inspector can target them like a host element.
-const FORWARDING_COMPONENTS = new Set(['ImagePlaceholder']);
+const BUILT_IN_FORWARDING_COMPONENTS = new Set(['ImagePlaceholder']);
 
-function isTaggableJsxName(name: t.JSXOpeningElement['name']): name is t.JSXIdentifier {
+function isTaggableJsxName(
+  name: t.JSXOpeningElement['name'],
+  forwardingComponents: Set<string>,
+): name is t.JSXIdentifier {
   if (!t.isJSXIdentifier(name)) return false;
-  return /^[a-z]/.test(name.name) || FORWARDING_COMPONENTS.has(name.name);
+  return /^[a-z]/.test(name.name) || forwardingComponents.has(name.name);
+}
+
+type ForwardedComponentProps = {
+  restName: string;
+  styleName: string | null;
+};
+
+function forwardedComponentProps(
+  fn: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+): ForwardedComponentProps | null {
+  let props: t.Node | undefined = fn.params[0];
+  if (t.isAssignmentPattern(props)) props = props.left;
+  if (!t.isObjectPattern(props)) return null;
+  let restName: string | null = null;
+  let styleName: string | null = null;
+  for (const property of props.properties) {
+    if (t.isRestElement(property) && t.isIdentifier(property.argument)) {
+      restName = property.argument.name;
+      continue;
+    }
+    if (!t.isObjectProperty(property) || property.computed) continue;
+    const key = t.isIdentifier(property.key)
+      ? property.key.name
+      : t.isStringLiteral(property.key)
+        ? property.key.value
+        : null;
+    if (key === 'data-slide-loc') return null;
+    if (key !== 'style') continue;
+    if (t.isIdentifier(property.value)) styleName = property.value.name;
+    else if (t.isAssignmentPattern(property.value) && t.isIdentifier(property.value.left)) {
+      styleName = property.value.left.name;
+    } else {
+      return null;
+    }
+  }
+  return restName ? { restName, styleName } : null;
+}
+
+function hostForwardsStyle(
+  opening: t.JSXOpeningElement,
+  forwarded: ForwardedComponentProps,
+): boolean {
+  const restIndex = opening.attributes.findIndex(
+    (attribute) =>
+      t.isJSXSpreadAttribute(attribute) &&
+      t.isIdentifier(attribute.argument) &&
+      attribute.argument.name === forwarded.restName,
+  );
+  if (restIndex < 0) return false;
+  const laterAttributes = opening.attributes.slice(restIndex + 1);
+  if (
+    laterAttributes.some(
+      (attribute) =>
+        t.isJSXSpreadAttribute(attribute) ||
+        (t.isJSXAttribute(attribute) &&
+          t.isJSXIdentifier(attribute.name) &&
+          attribute.name.name === 'data-slide-loc'),
+    )
+  ) {
+    return false;
+  }
+  if (forwarded.styleName === null) {
+    return !laterAttributes.some(
+      (attribute) =>
+        t.isJSXAttribute(attribute) &&
+        t.isJSXIdentifier(attribute.name) &&
+        attribute.name.name === 'style',
+    );
+  }
+  const style = opening.attributes.find(
+    (attribute): attribute is t.JSXAttribute =>
+      t.isJSXAttribute(attribute) &&
+      t.isJSXIdentifier(attribute.name) &&
+      attribute.name.name === 'style',
+  );
+  const expression =
+    style?.value && t.isJSXExpressionContainer(style.value) ? style.value.expression : null;
+  if (t.isIdentifier(expression) && expression.name === forwarded.styleName) return true;
+  if (!t.isObjectExpression(expression)) return false;
+  const last = expression.properties[expression.properties.length - 1];
+  return (
+    t.isSpreadElement(last) &&
+    t.isIdentifier(last.argument) &&
+    last.argument.name === forwarded.styleName
+  );
+}
+
+function forwardsEditablePropsToOneHost(
+  fn: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+  forwarded: ForwardedComponentProps,
+): boolean {
+  let restUses = 0;
+  let forwardedHost: t.JSXOpeningElement | null = null;
+  let nestedUse = false;
+  walkJsx(fn.body, (node) => {
+    if (!t.isJSXElement(node) || !t.isJSXIdentifier(node.openingElement.name)) return;
+    const uses = node.openingElement.attributes.filter(
+      (attribute) =>
+        t.isJSXSpreadAttribute(attribute) &&
+        t.isIdentifier(attribute.argument) &&
+        attribute.argument.name === forwarded.restName,
+    ).length;
+    if (uses === 0) return;
+    walkAll(fn.body, (candidate) => {
+      if (
+        (t.isFunctionDeclaration(candidate) ||
+          t.isFunctionExpression(candidate) ||
+          t.isArrowFunctionExpression(candidate)) &&
+        (candidate.start ?? 0) <= (node.start ?? 0) &&
+        (candidate.end ?? 0) >= (node.end ?? 0)
+      ) {
+        nestedUse = true;
+        return 'stop';
+      }
+    });
+    restUses += uses;
+    if (/^[a-z]/.test(node.openingElement.name.name)) forwardedHost = node.openingElement;
+  });
+  return (
+    !nestedUse &&
+    restUses === 1 &&
+    forwardedHost !== null &&
+    hostForwardsStyle(forwardedHost, forwarded)
+  );
+}
+
+function collectForwardingComponents(ast: t.File): Set<string> {
+  const components = new Set(BUILT_IN_FORWARDING_COMPONENTS);
+  const localComponents = new Map<string, boolean[]>();
+  walkAll(ast, (node) => {
+    let name: string | null = null;
+    let fn: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression | null = null;
+    if (t.isFunctionDeclaration(node) && node.id) {
+      name = node.id.name;
+      fn = node;
+    } else if (
+      t.isVariableDeclarator(node) &&
+      t.isIdentifier(node.id) &&
+      (t.isFunctionExpression(node.init) || t.isArrowFunctionExpression(node.init))
+    ) {
+      name = node.id.name;
+      fn = node.init;
+    }
+    if (!name || !fn || !/^[A-Z]/.test(name)) return;
+    const forwarded = forwardedComponentProps(fn);
+    const declarations = localComponents.get(name) ?? [];
+    declarations.push(Boolean(forwarded && forwardsEditablePropsToOneHost(fn, forwarded)));
+    localComponents.set(name, declarations);
+  });
+  for (const [name, declarations] of localComponents) {
+    components.delete(name);
+    if (declarations.length === 1 && declarations[0]) components.add(name);
+  }
+  return components;
 }
 
 function alreadyTagged(opening: t.JSXOpeningElement): boolean {
@@ -36,12 +193,13 @@ export function injectLocTags(code: string): string | null {
     return null;
   }
 
+  const forwardingComponents = collectForwardingComponents(ast);
   const insertions: { offset: number; text: string }[] = [];
   walkJsx(ast, (node) => {
     if (!t.isJSXElement(node) || !node.loc) return;
     const opening = node.openingElement;
     const name = opening.name;
-    if (!isTaggableJsxName(name) || alreadyTagged(opening)) return;
+    if (!isTaggableJsxName(name, forwardingComponents) || alreadyTagged(opening)) return;
     insertions.push({
       offset: name.end ?? 0,
       text: ` data-slide-loc="${node.loc.start.line}:${node.loc.start.column}"`,

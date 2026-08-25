@@ -4,6 +4,7 @@ export type HostedVersionState = {
   deployedSha?: string | null;
   hasDraftChanges: boolean;
   readOnly?: boolean;
+  targetRelation?: 'pending' | 'exact' | 'descendant' | 'unrelated';
 };
 
 export type HostedOperationReceipt = {
@@ -58,12 +59,33 @@ export class HostedStudioError extends Error {
 }
 
 const POLL_INTERVAL_MS = 3_000;
+const DELAYED_POLL_INTERVAL_MS = 15_000;
 const DEPLOYMENT_SETTLE_MS = 5_000;
-const DEPLOYMENT_TIMEOUT_MS = 5 * 60_000;
+const DEPLOYMENT_DELAYED_MS = 5 * 60_000;
+const DEPLOYMENT_STOP_MS = 30 * 60_000;
 const REQUIRED_MATCHES = 2;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function abortError() {
+  return new DOMException('Deployment wait was cancelled', 'AbortError');
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw abortError();
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function cacheBustedEndpoint(endpoint: string, params: Record<string, string> = {}) {
@@ -73,14 +95,30 @@ function cacheBustedEndpoint(endpoint: string, params: Record<string, string> = 
   return url.toString();
 }
 
+function targetIsDeployed(state: HostedVersionState, targetSha: string): boolean {
+  if (state.deployedSha === targetSha) return true;
+  return Boolean(
+    state.targetRelation === 'descendant' &&
+      state.deployedSha &&
+      state.deployedSha === state.mainSha,
+  );
+}
+
 async function responseBody<T>(response: Response, fallback: string): Promise<T> {
   const body = (await response.json().catch(() => ({}))) as T & StudioApiFailure;
   if (!response.ok) throw new HostedStudioError(body, fallback);
   return body;
 }
 
-export async function fetchHostedVersion(statusEndpoint: string): Promise<HostedVersionState> {
-  const response = await fetch(cacheBustedEndpoint(statusEndpoint), { cache: 'no-store' });
+export async function fetchHostedVersion(
+  statusEndpoint: string,
+  options: { targetSha?: string; signal?: AbortSignal } = {},
+): Promise<HostedVersionState> {
+  const params = options.targetSha ? { targetSha: options.targetSha } : undefined;
+  const response = await fetch(cacheBustedEndpoint(statusEndpoint, params), {
+    cache: 'no-store',
+    signal: options.signal,
+  });
   return responseBody(response, `Status request failed with ${response.status}`);
 }
 
@@ -140,31 +178,61 @@ export async function continueHostedOperation(
 export async function waitForHostedDeployment(
   statusEndpoint: string,
   targetSha: string,
-  options: { signal?: AbortSignal; onWaiting?: () => void } = {},
+  options: { signal?: AbortSignal; onWaiting?: () => void; onDelayed?: () => void } = {},
 ): Promise<void> {
-  const deadline = Date.now() + DEPLOYMENT_TIMEOUT_MS;
+  const delayedAt = Date.now() + DEPLOYMENT_DELAYED_MS;
+  const stopAt = Date.now() + DEPLOYMENT_STOP_MS;
+  let delayed = false;
   let matches = 0;
-  while (Date.now() < deadline && !options.signal?.aborted) {
-    await sleep(POLL_INTERVAL_MS);
-    options.onWaiting?.();
+  while (Date.now() < stopAt) {
+    await sleep(delayed ? DELAYED_POLL_INTERVAL_MS : POLL_INTERVAL_MS, options.signal);
+    if (!delayed) options.onWaiting?.();
+    if (!delayed && Date.now() >= delayedAt) {
+      delayed = true;
+      options.onDelayed?.();
+    }
+    const requestController = new AbortController();
+    let deadlineExpired = false;
+    const abortRequest = () => requestController.abort();
+    options.signal?.addEventListener('abort', abortRequest, { once: true });
+    const deadlineTimer = setTimeout(
+      () => {
+        deadlineExpired = true;
+        requestController.abort();
+      },
+      Math.max(0, stopAt - Date.now()),
+    );
     try {
-      const state = await fetchHostedVersion(statusEndpoint);
-      if (state.deployedSha === targetSha) {
+      const state = await fetchHostedVersion(statusEndpoint, {
+        targetSha,
+        signal: requestController.signal,
+      });
+      if (targetIsDeployed(state, targetSha)) {
         matches += 1;
         if (matches >= REQUIRED_MATCHES) {
-          await sleep(DEPLOYMENT_SETTLE_MS);
+          await sleep(DEPLOYMENT_SETTLE_MS, options.signal);
           return;
         }
       } else {
         matches = 0;
       }
-    } catch {
+    } catch (error) {
+      if (options.signal?.aborted) throw abortError();
+      if ((error as Error).name === 'AbortError' && !deadlineExpired) throw abortError();
       matches = 0;
+    } finally {
+      clearTimeout(deadlineTimer);
+      options.signal?.removeEventListener('abort', abortRequest);
     }
   }
-  if (options.signal?.aborted)
-    throw new DOMException('Deployment wait was cancelled', 'AbortError');
-  throw new Error('The change was published, but the deployment did not finish in time');
+  throw new HostedStudioError(
+    {
+      code: 'DEPLOYMENT_STATUS_TIMEOUT',
+      message: 'The change is saved, but Studio could not verify its deployment after 30 minutes.',
+      allowedActions: ['retry-status', 'open-current'],
+    },
+    'The change is saved, but Studio could not verify its deployment after 30 minutes.',
+  );
 }
 
 export async function waitForHostedOperation(
