@@ -146,6 +146,34 @@ describe('injectLocTags', () => {
     expect(out).toContain('<SharedImage data-slide-loc="6:22" src="hero.png" />');
   });
 
+  it('tags a local component that forwards style directly', () => {
+    const src = [
+      "type Props = React.ImgHTMLAttributes<HTMLImageElement> & { 'data-slide-loc'?: string };",
+      'const SharedImage = ({ style, ...imageProps }: Props) => (',
+      '  <img style={style} {...imageProps} />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('<SharedImage data-slide-loc="5:22" />');
+  });
+
+  it('tags a local component with defaulted props and a defaulted style binding', () => {
+    const src = [
+      "type Props = React.ImgHTMLAttributes<HTMLImageElement> & { 'data-slide-loc'?: string };",
+      'const SharedImage = ({ style = {}, ...imageProps }: Props = {}) => (',
+      '  <img {...imageProps} style={{ objectFit: "cover", ...style }} />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('<SharedImage data-slide-loc="5:22" />');
+  });
+
   it('does not tag a local component that does not forward its rest props', () => {
     const src = [
       'const SharedImage = ({ src, ...unused }: { src: string }) => <img src={src} />;',

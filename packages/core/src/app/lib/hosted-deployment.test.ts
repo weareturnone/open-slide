@@ -90,6 +90,92 @@ describe('waitForHostedDeployment', () => {
     await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
   });
 
+  it('does not accept a descendant relation until the deployed SHA matches main', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          draftSha: newerSha,
+          mainSha: newerSha,
+          deployedSha: 'older-sha',
+          hasDraftChanges: false,
+          targetRelation: 'descendant',
+        }),
+      ),
+    );
+
+    const waiting = waitForHostedDeployment('/api/studio/version', targetSha, {
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(6_000);
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('resets the required-match count after a deployment mismatch', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        call += 1;
+        const deployedSha = call === 2 ? newerSha : targetSha;
+        return Response.json({
+          draftSha: targetSha,
+          mainSha: targetSha,
+          deployedSha,
+          hasDraftChanges: false,
+          targetRelation: deployedSha === targetSha ? 'exact' : 'pending',
+        });
+      }),
+    );
+
+    let settled = false;
+    const waiting = waitForHostedDeployment('/api/studio/version', targetSha).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(8_000);
+    await waiting;
+    expect(call).toBe(4);
+  });
+
+  it('recovers from a transient status request failure', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        call += 1;
+        if (call === 1) throw new Error('temporary network failure');
+        return Response.json({
+          draftSha: targetSha,
+          mainSha: targetSha,
+          deployedSha: targetSha,
+          hasDraftChanges: false,
+          targetRelation: 'exact',
+        });
+      }),
+    );
+
+    const waiting = waitForHostedDeployment('/api/studio/version', targetSha);
+    await vi.advanceTimersByTimeAsync(14_000);
+    await expect(waiting).resolves.toBeUndefined();
+    expect(call).toBe(3);
+  });
+
+  it('rejects immediately when the caller signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      waitForHostedDeployment('/api/studio/version', targetSha, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('aborts an in-flight status request', async () => {
     const controller = new AbortController();
     vi.stubGlobal(

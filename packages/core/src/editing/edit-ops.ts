@@ -1076,7 +1076,7 @@ function componentMayRenderMultipleInstances(
   componentName: string,
   seen = new Set<string>(),
 ): boolean {
-  if (seen.has(componentName)) return false;
+  if (seen.has(componentName)) return true;
   const nextSeen = new Set(seen).add(componentName);
   if (
     countComponentCallSites(ast, componentName) > 1 ||

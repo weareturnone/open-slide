@@ -254,6 +254,98 @@ describe('applyEdit / set-style', () => {
     expect(result.error).toMatch(/reused component/);
   });
 
+  it.each(['flatMap', 'forEach', 'reduce', 'filter'])(
+    'rejects a crop inside a %s callback',
+    (method) => {
+      const src = [
+        'const Shared = () => <img src="shared.png" />;',
+        `const Page = () => <>{[1, 2].${method}((index) => <Shared key={index} />)}</>;`,
+        'export default [Page];',
+        '',
+      ].join('\n');
+      const result = applyEdit(src, 1, 21, [
+        { kind: 'set-style', key: 'objectViewBox', value: 'inset(0% 25% 0% 25%)' },
+      ]);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected failure');
+      expect(result.error).toMatch(/reused component/);
+    },
+  );
+
+  it.each([
+    'for (let index = 0; index < 2; index += 1) rows.push(<Shared key={index} />);',
+    'for (const index in [1, 2]) rows.push(<Shared key={index} />);',
+    'for (const index of [1, 2]) rows.push(<Shared key={index} />);',
+    'let index = 0; while (index < 2) { rows.push(<Shared key={index} />); index += 1; }',
+    'let index = 0; do { rows.push(<Shared key={index} />); index += 1; } while (index < 2);',
+  ])('rejects a crop inside a loop: %s', (loop) => {
+    const src = [
+      'const Shared = () => <img src="shared.png" />;',
+      'const Page = () => {',
+      '  const rows = [];',
+      `  ${loop}`,
+      '  return <>{rows}</>;',
+      '};',
+      'export default [Page];',
+      '',
+    ].join('\n');
+    const result = applyEdit(src, 1, 21, [
+      { kind: 'set-style', key: 'objectViewBox', value: 'inset(0% 25% 0% 25%)' },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/reused component/);
+  });
+
+  it('rejects a crop inside a function-declaration callback reached through an alias', () => {
+    const src = [
+      'const Shared = () => <img src="shared.png" />;',
+      'function renderItem(index: number) { return <Shared key={index} />; }',
+      'const aliasedRenderItem = renderItem;',
+      'const Page = () => <>{[1, 2].map(aliasedRenderItem)}</>;',
+      'export default [Page];',
+      '',
+    ].join('\n');
+    const result = applyEdit(src, 1, 21, [
+      { kind: 'set-style', key: 'objectViewBox', value: 'inset(0% 25% 0% 25%)' },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/reused component/);
+  });
+
+  it('rejects a crop inside bare memo and forwardRef wrappers', () => {
+    const src = [
+      'const Shared = memo(forwardRef(({ src }: { src: string }, ref) => <img ref={ref} src={src} />));',
+      'const First = () => <Shared src="first.png" />;',
+      'const Second = () => <Shared src="second.png" />;',
+      'export default [First, Second];',
+      '',
+    ].join('\n');
+    const result = applyEdit(src, 1, 67, [
+      { kind: 'set-style', key: 'objectViewBox', value: 'inset(0% 25% 0% 25%)' },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/reused component/);
+  });
+
+  it('rejects a crop in an indirect recursive component graph', () => {
+    const src = [
+      'const Shared = () => <img src="shared.png" />;',
+      'const First = () => <><Shared /><Second /></>;',
+      'const Second = () => <First />;',
+      'export default [First];',
+      '',
+    ].join('\n');
+    const result = applyEdit(src, 1, 21, [
+      { kind: 'set-style', key: 'objectViewBox', value: 'inset(0% 25% 0% 25%)' },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/reused component/);
+  });
+
   it('updates an existing style key in place', () => {
     const src = ['export default [() => (', "<h1 style={{ color: 'red' }}>Hi</h1>", ')];', ''].join(
       '\n',
