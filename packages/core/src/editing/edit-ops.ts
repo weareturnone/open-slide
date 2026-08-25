@@ -807,7 +807,28 @@ type EnclosingComponent = {
   fn: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression;
 };
 
-// Smallest top-level capitalized function whose body covers `target`.
+function wrappedComponentFunction(
+  init: t.Expression | null | undefined,
+): EnclosingComponent['fn'] | null {
+  if (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init)) return init;
+  if (!t.isCallExpression(init) || init.arguments.length === 0) return null;
+  const callee = init.callee;
+  const wrapperName = t.isIdentifier(callee)
+    ? callee.name
+    : t.isMemberExpression(callee) &&
+        !callee.computed &&
+        t.isIdentifier(callee.object) &&
+        callee.object.name === 'React' &&
+        t.isIdentifier(callee.property)
+      ? callee.property.name
+      : null;
+  if (wrapperName !== 'memo' && wrapperName !== 'forwardRef') return null;
+  const candidate = init.arguments[0];
+  if (t.isArrowFunctionExpression(candidate) || t.isFunctionExpression(candidate)) return candidate;
+  return t.isCallExpression(candidate) ? wrappedComponentFunction(candidate) : null;
+}
+
+// Smallest capitalized component function whose body covers `target`.
 function findEnclosingComponent(ast: t.File, target: t.Node): EnclosingComponent | null {
   let best: EnclosingComponent | null = null;
   let bestSize = Number.POSITIVE_INFINITY;
@@ -824,27 +845,14 @@ function findEnclosingComponent(ast: t.File, target: t.Node): EnclosingComponent
       bestSize = size;
     }
   };
-  const visitDecl = (decl: t.Statement) => {
-    if (t.isFunctionDeclaration(decl) && decl.id) {
-      consider(decl.id.name, decl);
-    } else if (t.isVariableDeclaration(decl)) {
-      for (const d of decl.declarations) {
-        if (!t.isVariableDeclarator(d) || !t.isIdentifier(d.id) || !d.init) continue;
-        if (t.isArrowFunctionExpression(d.init) || t.isFunctionExpression(d.init)) {
-          consider(d.id.name, d.init);
-        }
-      }
+  walkAll(ast, (node) => {
+    if (t.isFunctionDeclaration(node) && node.id) {
+      consider(node.id.name, node);
+    } else if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+      const fn = wrappedComponentFunction(node.init);
+      if (fn) consider(node.id.name, fn);
     }
-  };
-  for (const decl of ast.program.body) {
-    visitDecl(decl);
-    if (t.isExportNamedDeclaration(decl) || t.isExportDefaultDeclaration(decl)) {
-      const inner = decl.declaration;
-      if (inner && (t.isStatement(inner) || t.isFunctionDeclaration(inner))) {
-        visitDecl(inner as t.Statement);
-      }
-    }
-  }
+  });
   return best;
 }
 
@@ -872,6 +880,220 @@ function collectCallSiteCandidates(ast: t.Node, componentName: string): TextCand
     }
   });
   return out;
+}
+
+function countComponentCallSites(ast: t.Node, componentName: string): number {
+  let count = 0;
+  walkJsx(ast, (node) => {
+    if (!t.isJSXElement(node)) return;
+    const name = node.openingElement.name;
+    if (t.isJSXIdentifier(name) && name.name === componentName) count += 1;
+  });
+  return count;
+}
+
+function bodyContainsComponentCall(body: t.Node, componentName: string): boolean {
+  let found = false;
+  walkJsx(body, (child) => {
+    if (!t.isJSXElement(child)) return;
+    const name = child.openingElement.name;
+    if (t.isJSXIdentifier(name) && name.name === componentName) {
+      found = true;
+      return 'stop';
+    }
+  });
+  return found;
+}
+
+function resolveCallbacks(
+  ast: t.File,
+  argument: t.CallExpression['arguments'][number],
+  seen = new Set<string>(),
+): Array<t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression> {
+  if (t.isArrowFunctionExpression(argument) || t.isFunctionExpression(argument)) return [argument];
+  if (!t.isIdentifier(argument) || seen.has(argument.name)) return [];
+  const results: Array<t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression> =
+    [];
+  walkAll(ast, (node) => {
+    if (t.isFunctionDeclaration(node) && node.id?.name === argument.name) {
+      results.push(node);
+      return;
+    }
+    if (
+      !t.isVariableDeclarator(node) ||
+      !t.isIdentifier(node.id) ||
+      node.id.name !== argument.name
+    ) {
+      return;
+    }
+    if (t.isArrowFunctionExpression(node.init) || t.isFunctionExpression(node.init)) {
+      results.push(node.init);
+      return;
+    }
+    if (t.isIdentifier(node.init)) {
+      results.push(...resolveCallbacks(ast, node.init, new Set(seen).add(argument.name)));
+    }
+  });
+  return results;
+}
+
+function isRepeatedCallbackCall(node: t.CallExpression): boolean {
+  if (!t.isMemberExpression(node.callee) || node.callee.computed) return false;
+  const property = node.callee.property;
+  if (!t.isIdentifier(property)) return false;
+  if (t.isIdentifier(node.callee.object) && node.callee.object.name === 'Array') {
+    return property.name === 'from';
+  }
+  return ['map', 'flatMap', 'forEach', 'reduce', 'filter'].includes(property.name);
+}
+
+function componentHasRepeatedCallSite(ast: t.File, componentName: string): boolean {
+  let repeated = false;
+  walkAll(ast, (node) => {
+    if (
+      (t.isForStatement(node) ||
+        t.isForInStatement(node) ||
+        t.isForOfStatement(node) ||
+        t.isWhileStatement(node) ||
+        t.isDoWhileStatement(node)) &&
+      bodyContainsComponentCall(node.body, componentName)
+    ) {
+      repeated = true;
+      return 'stop';
+    }
+    if (!t.isCallExpression(node) || !isRepeatedCallbackCall(node)) return;
+    for (const argument of node.arguments) {
+      const callbacks = resolveCallbacks(ast, argument);
+      if (callbacks.some((callback) => bodyContainsComponentCall(callback.body, componentName))) {
+        repeated = true;
+      }
+      if (repeated) return 'stop';
+    }
+  });
+  return repeated;
+}
+
+function componentCallSiteParents(ast: t.File, componentName: string): Set<string> {
+  const parents = new Set<string>();
+  walkJsx(ast, (node) => {
+    if (!t.isJSXElement(node)) return;
+    const name = node.openingElement.name;
+    if (!t.isJSXIdentifier(name) || name.name !== componentName) return;
+    const parent = findEnclosingComponent(ast, node);
+    if (parent && parent.name !== componentName) parents.add(parent.name);
+  });
+  return parents;
+}
+
+function variableInitializers(ast: t.File, name: string): t.Expression[] {
+  const results: t.Expression[] = [];
+  walkAll(ast, (node) => {
+    if (
+      t.isVariableDeclarator(node) &&
+      t.isIdentifier(node.id) &&
+      node.id.name === name &&
+      t.isExpression(node.init)
+    ) {
+      results.push(node.init);
+    }
+  });
+  return results;
+}
+
+function identifierResolvesToComponent(
+  ast: t.File,
+  name: string,
+  componentName: string,
+  seen = new Set<string>(),
+): boolean {
+  if (name === componentName) return true;
+  if (seen.has(name)) return false;
+  return variableInitializers(ast, name).some(
+    (init) =>
+      t.isIdentifier(init) &&
+      identifierResolvesToComponent(ast, init.name, componentName, new Set(seen).add(name)),
+  );
+}
+
+function countPageReferences(
+  ast: t.File,
+  expression: t.Expression,
+  componentName: string,
+  seenCollections = new Set<string>(),
+): number {
+  if (t.isIdentifier(expression)) {
+    if (identifierResolvesToComponent(ast, expression.name, componentName)) return 1;
+    if (seenCollections.has(expression.name)) return 0;
+    return variableInitializers(ast, expression.name).reduce(
+      (count, init) =>
+        count +
+        countPageReferences(
+          ast,
+          init,
+          componentName,
+          new Set(seenCollections).add(expression.name),
+        ),
+      0,
+    );
+  }
+  if (!t.isArrayExpression(expression)) return 0;
+  let count = 0;
+  for (const item of expression.elements) {
+    if (!item) continue;
+    const value = t.isSpreadElement(item) ? item.argument : item;
+    if (t.isExpression(value)) {
+      count += countPageReferences(ast, value, componentName, seenCollections);
+    }
+  }
+  return count;
+}
+
+function countExportedPageReferences(ast: t.File, componentName: string): number {
+  let count = 0;
+  walkAll(ast, (node) => {
+    if (!t.isExportDefaultDeclaration(node) || !t.isExpression(node.declaration)) return;
+    count += countPageReferences(ast, node.declaration, componentName);
+  });
+  return count;
+}
+
+function componentCallsItself(ast: t.File, componentName: string): boolean {
+  let recursive = false;
+  walkJsx(ast, (node) => {
+    if (!t.isJSXElement(node)) return;
+    const name = node.openingElement.name;
+    if (!t.isJSXIdentifier(name) || name.name !== componentName) return;
+    if (findEnclosingComponent(ast, node)?.name === componentName) {
+      recursive = true;
+      return 'stop';
+    }
+  });
+  return recursive;
+}
+
+function componentMayRenderMultipleInstances(
+  ast: t.File,
+  componentName: string,
+  seen = new Set<string>(),
+): boolean {
+  if (seen.has(componentName)) return true;
+  const nextSeen = new Set(seen).add(componentName);
+  if (
+    countComponentCallSites(ast, componentName) > 1 ||
+    componentHasRepeatedCallSite(ast, componentName) ||
+    countExportedPageReferences(ast, componentName) > 1 ||
+    componentCallsItself(ast, componentName)
+  ) {
+    return true;
+  }
+  for (const parentName of componentCallSiteParents(ast, componentName)) {
+    if (componentMayRenderMultipleInstances(ast, parentName, nextSeen)) return true;
+  }
+  return false;
+}
+
+function hasCropStyleOperation(ops: EditOp[]): boolean {
+  return ops.some((op) => op.kind === 'set-style' && op.key === 'objectViewBox');
 }
 
 function collectPropCallSiteCandidates(
@@ -1231,6 +1453,23 @@ export function applyEdit(
   if (!ast) return { ok: false, status: 422, error: 'could not parse source' };
   const element = findElementForEdit(ast, line, column, ops);
   if (!element) return { ok: false, status: 422, error: 'no JSX element at location' };
+
+  if (hasCropStyleOperation(ops)) {
+    const elementName = element.openingElement.name;
+    const component = findEnclosingComponent(ast, element);
+    if (
+      t.isJSXIdentifier(elementName) &&
+      (componentHasRepeatedCallSite(ast, elementName.name) ||
+        (component && componentMayRenderMultipleInstances(ast, component.name)))
+    ) {
+      return {
+        ok: false,
+        status: 422,
+        error:
+          'This image is rendered by a reused component. Forward style and data-slide-loc to save a crop for only this image.',
+      };
+    }
+  }
 
   const deleteOps = ops.filter((op) => op.kind === 'delete-element');
   if (deleteOps.length > 0) {

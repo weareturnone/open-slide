@@ -180,6 +180,48 @@ test.describe('inspector editing', () => {
     expect(persistedCrop).toMatch(/^inset\(/);
   });
 
+  test('crops stay independent for images rendered by one reusable component', async ({
+    page,
+    request,
+  }) => {
+    await openEditable(page, request, 'insp-shared-crops');
+    await page.getByTitle('Inspect').click();
+
+    const applyCrop = async (alt: string) => {
+      await editorCanvas(page).getByAltText(alt).click();
+      const panel = page.locator('aside[data-inspector-ui]');
+      await panel.getByRole('button', { name: 'Crop…' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Crop image' });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('button', { name: 'Apply' }).click();
+      const saved = page.waitForResponse(
+        (res) => res.url().includes('/__edit') && res.request().method() === 'POST',
+      );
+      await page.getByRole('button', { name: 'Save' }).click();
+      expect((await saved).status()).toBe(200);
+      await page.reload();
+      await page.waitForLoadState('networkidle');
+    };
+
+    await applyCrop('Shared crop landscape');
+    await page.getByTitle('Inspect').click();
+    await applyCrop('Shared crop portrait');
+
+    const source = await readSlideSource('insp-shared-crops');
+    const callSiteCrops = source.match(/<SharedCropImage[^>]*objectViewBox/g) ?? [];
+    expect(callSiteCrops).toHaveLength(2);
+
+    const landscapeCrop = await editorCanvas(page)
+      .getByAltText('Shared crop landscape')
+      .evaluate((image) => (image as HTMLImageElement).style.getPropertyValue('object-view-box'));
+    const portraitCrop = await editorCanvas(page)
+      .getByAltText('Shared crop portrait')
+      .evaluate((image) => (image as HTMLImageElement).style.getPropertyValue('object-view-box'));
+    expect(landscapeCrop).toMatch(/^inset\(/);
+    expect(portraitCrop).toMatch(/^inset\(/);
+    expect(landscapeCrop).not.toBe(portraitCrop);
+  });
+
   test('undo and redo step through an inspector edit', async ({ page, request }) => {
     await openEditable(page, request, 'insp-undo');
     await page.getByTitle('Inspect').click();

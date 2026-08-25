@@ -82,6 +82,8 @@ export type RunStructuralMutation = HostedOperationContextValue['runStructuralMu
 
 const STORAGE_KEY = 'open-slide:hosted-operation:v1';
 const publishConfig = config.authoring?.publish;
+const DEPLOYMENT_DELAYED_MESSAGE =
+  'The change is saved. Vercel is still deploying it. Keep this tab open; Studio will load it when ready.';
 
 const initialState: OperationState = {
   phase: 'idle',
@@ -95,6 +97,14 @@ const initialState: OperationState = {
 };
 
 const HostedOperationContext = createContext<HostedOperationContextValue | null>(null);
+
+function markDeploymentDelayed(previous: OperationState): OperationState {
+  return {
+    ...previous,
+    phase: 'delayed',
+    message: DEPLOYMENT_DELAYED_MESSAGE,
+  };
+}
 
 function saveSession(state: OperationState) {
   try {
@@ -203,6 +213,7 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
         if (!targetSha) return;
         await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha, {
           signal: controller.signal,
+          onDelayed: () => setState(markDeploymentDelayed),
         });
         const destination = current.destination
           ? deployedStudioUrl(current.destination, targetSha).toString()
@@ -256,6 +267,8 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
     void waitForStoredOperation(restored);
     return () => abortRef.current?.abort();
   }, [waitForStoredOperation]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const runStructuralMutation = useCallback(
     async <T extends Record<string, unknown>>(
@@ -341,7 +354,11 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
           result.operation,
           {
             onPhase: (phase) => {
-              setState((previous) => ({ ...previous, phase: phaseFromStatus(phase) }));
+              setState((previous) =>
+                phase === 'delayed'
+                  ? markDeploymentDelayed(previous)
+                  : { ...previous, phase: phaseFromStatus(phase) },
+              );
             },
           },
         );
@@ -415,6 +432,10 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
         label: options.label,
         startedAt,
       });
+      let durableState: OperationState | null = null;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
         const { targetSha, result } = await options.action();
         const rawDestination = options.destination?.(result, targetSha) ?? null;
@@ -430,10 +451,13 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
           message: null,
           allowedActions: [],
         };
+        durableState = pending;
         setState(pending);
         saveSession(pending);
         await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha, {
+          signal: controller.signal,
           onWaiting: () => setState((previous) => ({ ...previous, phase: 'waiting' })),
+          onDelayed: () => setState(markDeploymentDelayed),
         });
         const destination = rawDestination
           ? deployedStudioUrl(rawDestination, targetSha).toString()
@@ -445,19 +469,26 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
           allowedActions: destination ? ['open-current'] : [],
         };
         activeRef.current = false;
+        if (abortRef.current === controller) abortRef.current = null;
         setState(ready);
         saveSession(ready);
         return { result, targetSha };
       } catch (error) {
+        if ((error as Error).name === 'AbortError') {
+          activeRef.current = false;
+          throw error;
+        }
         const next: OperationState = {
-          ...initialState,
+          ...(durableState || initialState),
           phase: 'failed',
           label: options.label,
           startedAt,
           message: String((error as Error).message ?? error),
-          allowedActions: ['open-current'],
+          allowedActions:
+            error instanceof HostedStudioError ? error.allowedActions : ['open-current'],
         };
         activeRef.current = false;
+        if (abortRef.current === controller) abortRef.current = null;
         setState(next);
         saveSession(next);
         throw error;
@@ -581,7 +612,7 @@ export function HostedOperationStatusBar({ className }: { className?: string }) 
           .padStart(2, '0')}
         :{(elapsed % 60).toString().padStart(2, '0')}
       </span>
-      {state.allowedActions.includes('retry-status') && state.receipt ? (
+      {state.allowedActions.includes('retry-status') && (state.receipt || state.targetSha) ? (
         <Button size="sm" variant="outline" onClick={() => void retry()}>
           <RotateCw className="size-3.5" />
           Retry status
@@ -592,10 +623,15 @@ export function HostedOperationStatusBar({ className }: { className?: string }) 
           size="sm"
           variant="brand"
           onClick={() => {
-            if (state.destination) window.location.assign(state.destination);
+            if (!state.destination) return;
+            if (state.phase === 'delayed') {
+              window.open(state.destination, '_blank', 'noopener,noreferrer');
+            } else {
+              window.location.assign(state.destination);
+            }
           }}
         >
-          Open change
+          {state.phase === 'delayed' ? 'Open current version' : 'Open change'}
         </Button>
       ) : null}
       {terminal ? (

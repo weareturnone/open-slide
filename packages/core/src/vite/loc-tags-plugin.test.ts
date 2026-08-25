@@ -130,6 +130,206 @@ describe('injectLocTags', () => {
     expect(out).not.toContain('<Layout data-slide-loc');
     expect(out).not.toContain('<CustomThing data-slide-loc');
   });
+
+  it('tags a local component that forwards rest props to a host element', () => {
+    const src = [
+      "import type { CSSProperties } from 'react';",
+      "type Props = { src: string; style?: CSSProperties; 'data-slide-loc'?: string };",
+      'const SharedImage = ({ src, style, ...imageProps }: Props) => (',
+      "  <img src={src} {...imageProps} style={{ objectFit: 'cover', ...style }} />",
+      ');',
+      'export default [() => <SharedImage src="hero.png" />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('<SharedImage data-slide-loc="6:22" src="hero.png" />');
+  });
+
+  it('tags a local component that forwards style directly', () => {
+    const src = [
+      "type Props = React.ImgHTMLAttributes<HTMLImageElement> & { 'data-slide-loc'?: string };",
+      'const SharedImage = ({ style, ...imageProps }: Props) => (',
+      '  <img style={style} {...imageProps} />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('<SharedImage data-slide-loc="5:22" />');
+  });
+
+  it('tags a local component with defaulted props and a defaulted style binding', () => {
+    const src = [
+      "type Props = React.ImgHTMLAttributes<HTMLImageElement> & { 'data-slide-loc'?: string };",
+      'const SharedImage = ({ style = {}, ...imageProps }: Props = {}) => (',
+      '  <img {...imageProps} style={{ objectFit: "cover", ...style }} />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('<SharedImage data-slide-loc="5:22" />');
+  });
+
+  it('does not tag a local component that does not forward its rest props', () => {
+    const src = [
+      'const SharedImage = ({ src, ...unused }: { src: string }) => <img src={src} />;',
+      'export default [() => <SharedImage src="hero.png" />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    expect(out ?? src).not.toContain('<SharedImage data-slide-loc');
+  });
+
+  it('does not tag a component that forwards location props but drops style', () => {
+    const src = [
+      "type Props = { style?: React.CSSProperties; 'data-slide-loc'?: string };",
+      'const SharedImage = ({ style, ...imageProps }: Props) => <img {...imageProps} />;',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host image');
+    expect(out).not.toContain('<SharedImage data-slide-loc');
+  });
+
+  it('does not tag a component that forwards one location to multiple host elements', () => {
+    const src = [
+      'const ImagePair = (props: React.ImgHTMLAttributes<HTMLImageElement>) => (',
+      '  <><img {...props} /><img {...props} /></>',
+      ');',
+      'export default [() => <ImagePair />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host images');
+    expect(out).not.toContain('<ImagePair data-slide-loc');
+  });
+
+  it('does not tag a component when a later style overrides forwarded crop styles', () => {
+    const src = [
+      'const SharedImage = ({ ...imageProps }: React.ImgHTMLAttributes<HTMLImageElement>) => (',
+      '  <img {...imageProps} style={{ width: 100 }} />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host image');
+    expect(out).not.toContain('<SharedImage data-slide-loc');
+  });
+
+  it('does not tag a component when forwarded props also fan out through a child', () => {
+    const src = [
+      'const Child = (props: React.ImgHTMLAttributes<HTMLImageElement>) => <img {...props} />;',
+      'const Parent = ({ ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (',
+      '  <><img {...props} /><Child {...props} /></>',
+      ');',
+      'export default [() => <Parent />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host images');
+    expect(out).not.toContain('<Parent data-slide-loc');
+  });
+
+  it('does not tag a component when a later spread can override forwarded edit props', () => {
+    const src = [
+      'const SharedImage = ({ defaults, ...imageProps }: React.ImgHTMLAttributes<HTMLImageElement> & { defaults: React.ImgHTMLAttributes<HTMLImageElement> }) => (',
+      '  <img {...imageProps} {...defaults} />',
+      ');',
+      'export default [() => <SharedImage defaults={{}} />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host image');
+    expect(out).not.toContain('<SharedImage data-slide-loc');
+  });
+
+  it('does not tag a component when a fixed location overrides the forwarded location', () => {
+    const src = [
+      'const SharedImage = ({ ...imageProps }: React.ImgHTMLAttributes<HTMLImageElement>) => (',
+      '  <img {...imageProps} data-slide-loc="fixed" />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    expect(out ?? src).not.toContain('<SharedImage data-slide-loc');
+  });
+
+  it('does not tag a component that removes the location prop from its rest props', () => {
+    const src = [
+      "type Props = React.ImgHTMLAttributes<HTMLImageElement> & { 'data-slide-loc'?: string };",
+      "const SharedImage = ({ 'data-slide-loc': ignored, ...imageProps }: Props) => (",
+      '  <img {...imageProps} />',
+      ');',
+      'export default [() => <SharedImage />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host image');
+    expect(out).not.toContain('<SharedImage data-slide-loc');
+  });
+
+  it('does not tag a component that forwards edit props from a map callback', () => {
+    const src = [
+      'const Parent = ({ items, ...imageProps }: { items: string[] } & React.ImgHTMLAttributes<HTMLImageElement>) => (',
+      '  items.map((item) => <img key={item} {...imageProps} />)',
+      ');',
+      'export default [() => <Parent items={["a", "b"]} />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host image');
+    expect(out).not.toContain('<Parent data-slide-loc');
+  });
+
+  it('does not tag a component that forwards edit props through a nested component', () => {
+    const src = [
+      'const Parent = ({ ...imageProps }: React.ImgHTMLAttributes<HTMLImageElement>) => {',
+      '  const Inner = () => <img {...imageProps} />;',
+      '  return <><Inner /><Inner /></>;',
+      '};',
+      'export default [() => <Parent />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host image');
+    expect(out).not.toContain('<Parent data-slide-loc');
+  });
+
+  it('does not merge forwarding safety across shadowed component names', () => {
+    const src = [
+      'const PageA = () => {',
+      '  const Shared = ({ style, ...imageProps }: React.ImgHTMLAttributes<HTMLImageElement>) => <img {...imageProps} style={{ ...style }} />;',
+      '  return <Shared />;',
+      '};',
+      'const PageB = () => {',
+      '  const Shared = ({ style, ...imageProps }: React.ImgHTMLAttributes<HTMLImageElement>) => <img {...imageProps} />;',
+      '  return <Shared />;',
+      '};',
+      'export default [PageA, PageB];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host images');
+    expect(out).not.toContain('<Shared data-slide-loc');
+  });
+
+  it('does not trust an unsafe local component that shadows ImagePlaceholder', () => {
+    const src = [
+      'const ImagePlaceholder = ({ ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => <><img {...props} /><img {...props} /></>;',
+      'export default [() => <ImagePlaceholder />];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src);
+    if (out === null) throw new Error('expected transform for the host images');
+    expect(out).not.toContain('<ImagePlaceholder data-slide-loc');
+  });
 });
 
 describe('locTagsPlugin', () => {
