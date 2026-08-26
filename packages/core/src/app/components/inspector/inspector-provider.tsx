@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { useHistory } from '@/components/history-provider';
+import { useHostedOperation } from '@/components/hosted-operation-provider';
 import { Button } from '@/components/ui/button';
 import { authoringEnabled, authoringWritable, notifyAuthoringChanged } from '@/lib/authoring';
 import { type SlideComment, useComments } from '@/lib/inspector/use-comments';
@@ -56,6 +57,39 @@ type Bucket = {
   origHtmls: Map<string /* instanceId */, string>;
   origAttrs: Map<string, string | null>;
 };
+
+function createBucket(line: number, column: number): Bucket {
+  return {
+    line,
+    column,
+    styleOps: new Map(),
+    rangeStyleOps: new Map(),
+    textOps: new Map(),
+    attrOps: new Map(),
+    origStyle: new Map(),
+    origTexts: new Map(),
+    origHtmls: new Map(),
+    origAttrs: new Map(),
+  };
+}
+
+function bucketHasOps(bucket: Bucket): boolean {
+  return (
+    bucket.styleOps.size > 0 ||
+    bucket.rangeStyleOps.size > 0 ||
+    bucket.textOps.size > 0 ||
+    bucket.attrOps.size > 0
+  );
+}
+
+function previewBucket(previews: Map<string, Bucket>, key: string, source: Bucket): Bucket {
+  let preview = previews.get(key);
+  if (!preview) {
+    preview = createBucket(source.line, source.column);
+    previews.set(key, preview);
+  }
+  return preview;
+}
 
 const INSTANCE_ID_ATTR = 'data-slide-instance-id';
 
@@ -263,9 +297,11 @@ type InspectorCtx = {
   // close) is what actually writes to disk; `cancelEdits` reverts.
   bufferOps: (line: number, column: number, anchor: HTMLElement, ops: EditOp[]) => void;
   pendingCount: number;
+  hasPendingEdits: () => boolean;
   commitEdits: () => Promise<void>;
   cancelEdits: () => void;
   committing: boolean;
+  editingLocked: boolean;
   openCrop: (anchor: HTMLImageElement) => void;
   openReplace: (anchor: HTMLElement) => void;
 };
@@ -295,12 +331,16 @@ export function InspectorProvider({
   const { comments, error, refetch, add, remove } = useComments(slideId, commentsEnabled);
   const { applyEdit, applyEdits } = useEditor(slideId, kind);
   const history = useHistory();
+  const { structuralLocked } = useHostedOperation();
 
   const pendingRef = useRef<Map<string, Bucket>>(new Map());
+  const committedPreviewRef = useRef<Map<string, Bucket>>(new Map());
+  const commitPromiseRef = useRef<Promise<void> | null>(null);
   const instanceCounterRef = useRef(0);
   const pendingSeqRef = useRef(0);
   const [pendingCount, setPendingCount] = useState(0);
   const [committing, setCommitting] = useState(false);
+  const editingLocked = structuralLocked || !authoringWritable;
   const [cropTarget, setCropTarget] = useState<{
     line: number;
     column: number;
@@ -342,6 +382,11 @@ export function InspectorProvider({
     setPendingCount(n);
   }, []);
 
+  const hasPendingEdits = useCallback(
+    () => Array.from(pendingRef.current.values()).some(bucketHasOps),
+    [],
+  );
+
   // Find the live anchor for a buffered loc. Used by history undo/redo
   // since the original `anchor` reference may have unmounted. With an
   // instance id, prefer the matching DOM node so per-instance text edits
@@ -363,18 +408,7 @@ export function InspectorProvider({
       const key = `${line}:${column}`;
       let bucket = pendingRef.current.get(key);
       if (!bucket) {
-        bucket = {
-          line,
-          column,
-          styleOps: new Map(),
-          rangeStyleOps: new Map(),
-          textOps: new Map(),
-          attrOps: new Map(),
-          origStyle: new Map(),
-          origTexts: new Map(),
-          origHtmls: new Map(),
-          origAttrs: new Map(),
-        };
+        bucket = createBucket(line, column);
         pendingRef.current.set(key, bucket);
       }
       const style = (anchor?.style ?? {}) as unknown as Record<string, string>;
@@ -384,7 +418,11 @@ export function InspectorProvider({
           if (anchor && !bucket.origStyle.has(op.key)) {
             bucket.origStyle.set(op.key, style[op.key] ?? '');
           }
-          bucket.styleOps.set(op.key, { value: op.value, prevText: op.prevText, seq });
+          bucket.styleOps.set(op.key, {
+            value: op.value,
+            prevText: op.prevText ?? (anchor ? readEditableText(anchor) : undefined),
+            seq,
+          });
           if (anchor?.isConnected) style[op.key] = op.value ?? '';
         } else if (op.kind === 'set-text-range-style') {
           if (!anchor) continue;
@@ -632,6 +670,7 @@ export function InspectorProvider({
 
   const bufferOps = useCallback(
     (line: number, column: number, anchor: HTMLElement, ops: EditOp[]) => {
+      if (structuralLocked) return;
       const instanceId = ops.some(
         (op) => op.kind === 'set-text' || op.kind === 'set-text-range-style',
       )
@@ -654,141 +693,173 @@ export function InspectorProvider({
         redo: () => applyOpsRaw(line, column, findAnchor(line, column, instanceId), ops),
       });
     },
-    [applyOpsRaw, snapshotForOps, restoreSnapshot, findAnchor, history, ensureInstanceId],
+    [
+      applyOpsRaw,
+      snapshotForOps,
+      restoreSnapshot,
+      findAnchor,
+      history,
+      ensureInstanceId,
+      structuralLocked,
+    ],
   );
 
-  const commitEdits = useCallback(async () => {
-    const buckets = pendingRef.current;
-    if (buckets.size === 0) return;
-    type PendingItem = {
-      key: string;
-      seq: number;
-      edit: Edit;
-      onSuccess: (bucket: Bucket) => void;
-    };
-    const pending: PendingItem[] = [];
-    for (const [key, bucket] of buckets) {
-      const { line, column, styleOps, rangeStyleOps, textOps, attrOps, origTexts } = bucket;
-      for (const [k, op] of styleOps) {
-        pending.push({
-          key,
-          seq: op.seq,
-          edit: {
-            line,
-            column,
-            ops: [{ kind: 'set-style', key: k, value: op.value, prevText: op.prevText }],
-          },
-          onSuccess: (b) => {
-            b.styleOps.delete(k);
-          },
-        });
-      }
-      for (const [attr, op] of attrOps) {
-        pending.push({
-          key,
-          seq: op.seq,
-          edit: {
-            line,
-            column,
-            ops: [
-              {
-                kind: 'set-attr-asset',
-                attr,
-                assetPath: op.assetPath,
-                previewUrl: op.previewUrl,
-              },
-            ],
-          },
-          onSuccess: (b) => {
-            b.attrOps.delete(attr);
-          },
-        });
-      }
-      for (const [id, op] of rangeStyleOps) {
-        pending.push({
-          key,
-          seq: op.seq,
-          edit: {
-            line,
-            column,
-            ops: [
-              {
-                kind: 'set-text-range-style',
-                start: op.start,
-                end: op.end,
-                key: op.key,
-                value: op.value,
-                prevText: op.prevText,
-              },
-            ],
-          },
-          onSuccess: (b) => {
-            b.rangeStyleOps.delete(id);
-          },
-        });
-      }
-      // Per-instance text edits — one Edit per call site, each with its
-      // own prevText so the server can disambiguate among siblings.
-      for (const [instanceId, textOp] of textOps) {
-        const orig = origTexts.get(instanceId);
-        pending.push({
-          key,
-          seq: textOp.seq,
-          edit: {
-            line,
-            column,
-            ops: [{ kind: 'set-text', value: textOp.value, prevText: orig?.value }],
-          },
-          onSuccess: (b) => {
-            b.textOps.delete(instanceId);
-          },
-        });
-      }
-    }
-    pending.sort((a, b) => a.seq - b.seq);
-    if (pending.length === 0) {
-      pendingRef.current = new Map();
-      setPendingCount(0);
-      history.clear();
-      return;
-    }
-    setCommitting(true);
-    try {
-      const results = await applyEdits(pending.map((p) => p.edit));
-      if (results.some((result) => result.ok)) {
-        notifyAuthoringChanged();
-      }
-      const failures: string[] = [];
-      for (let i = 0; i < results.length; i++) {
-        const item = pending[i];
-        const r = results[i];
-        const bucket = pendingRef.current.get(item.key);
-        if (r.ok) {
-          if (bucket) {
-            item.onSuccess(bucket);
-            if (
-              bucket.styleOps.size === 0 &&
-              bucket.rangeStyleOps.size === 0 &&
-              bucket.textOps.size === 0 &&
-              bucket.attrOps.size === 0
-            ) {
-              pendingRef.current.delete(item.key);
-            }
-          }
-        } else {
-          failures.push(`line ${item.edit.line}: ${r.error ?? 'edit failed'}`);
+  const commitEdits = useCallback((): Promise<void> => {
+    if (commitPromiseRef.current) return commitPromiseRef.current;
+
+    const run = async () => {
+      const buckets = pendingRef.current;
+      if (buckets.size === 0) return;
+      type PendingItem = {
+        key: string;
+        seq: number;
+        edit: Edit;
+        source: Bucket;
+        onSuccess: (current: Bucket | undefined, preview: Bucket) => void;
+      };
+      const pending: PendingItem[] = [];
+      for (const [key, bucket] of buckets) {
+        const { line, column, styleOps, rangeStyleOps, textOps, attrOps, origTexts } = bucket;
+        for (const [k, op] of styleOps) {
+          pending.push({
+            key,
+            seq: op.seq,
+            source: bucket,
+            edit: {
+              line,
+              column,
+              ops: [{ kind: 'set-style', key: k, value: op.value, prevText: op.prevText }],
+            },
+            onSuccess: (current, preview) => {
+              preview.styleOps.set(k, op);
+              if (current?.styleOps.get(k)?.seq === op.seq) current.styleOps.delete(k);
+            },
+          });
+        }
+        for (const [attr, op] of attrOps) {
+          pending.push({
+            key,
+            seq: op.seq,
+            source: bucket,
+            edit: {
+              line,
+              column,
+              ops: [
+                {
+                  kind: 'set-attr-asset',
+                  attr,
+                  assetPath: op.assetPath,
+                  previewUrl: op.previewUrl,
+                },
+              ],
+            },
+            onSuccess: (current, preview) => {
+              preview.attrOps.set(attr, op);
+              if (current?.attrOps.get(attr)?.seq === op.seq) current.attrOps.delete(attr);
+            },
+          });
+        }
+        for (const [id, op] of rangeStyleOps) {
+          pending.push({
+            key,
+            seq: op.seq,
+            source: bucket,
+            edit: {
+              line,
+              column,
+              ops: [
+                {
+                  kind: 'set-text-range-style',
+                  start: op.start,
+                  end: op.end,
+                  key: op.key,
+                  value: op.value,
+                  prevText: op.prevText,
+                },
+              ],
+            },
+            onSuccess: (current, preview) => {
+              preview.rangeStyleOps.set(id, op);
+              const html = bucket.origHtmls.get(op.instanceId);
+              if (html !== undefined && !preview.origHtmls.has(op.instanceId)) {
+                preview.origHtmls.set(op.instanceId, html);
+              }
+              if (current?.rangeStyleOps.get(id)?.seq === op.seq) {
+                current.rangeStyleOps.delete(id);
+              }
+            },
+          });
+        }
+        // Per-instance text edits use prevText to disambiguate reused
+        // components that share one JSX source location.
+        for (const [instanceId, textOp] of textOps) {
+          const orig = origTexts.get(instanceId);
+          pending.push({
+            key,
+            seq: textOp.seq,
+            source: bucket,
+            edit: {
+              line,
+              column,
+              ops: [{ kind: 'set-text', value: textOp.value, prevText: orig?.value }],
+            },
+            onSuccess: (current, preview) => {
+              preview.textOps.set(instanceId, textOp);
+              if (orig && !preview.origTexts.has(instanceId)) {
+                preview.origTexts.set(instanceId, orig);
+              }
+              if (current?.textOps.get(instanceId)?.seq === textOp.seq) {
+                current.textOps.delete(instanceId);
+              }
+            },
+          });
         }
       }
-      refreshCount();
-      if (failures.length > 0) throw new Error(failures.join('; '));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`${t.inspector.saveFailed} ${msg}`);
-      throw err;
-    } finally {
-      setCommitting(false);
-      history.clear();
-    }
+      pending.sort((a, b) => a.seq - b.seq);
+      if (pending.length === 0) {
+        for (const [key, bucket] of pendingRef.current) {
+          if (!bucketHasOps(bucket)) pendingRef.current.delete(key);
+        }
+        refreshCount();
+        return;
+      }
+
+      setCommitting(true);
+      try {
+        const results = await applyEdits(pending.map((item) => item.edit));
+        if (results.some((result) => result.ok)) notifyAuthoringChanged();
+
+        const failures: string[] = [];
+        for (let i = 0; i < results.length; i++) {
+          const item = pending[i];
+          const result = results[i];
+          const current = pendingRef.current.get(item.key);
+          if (result.ok) {
+            const preview = previewBucket(committedPreviewRef.current, item.key, item.source);
+            item.onSuccess(current, preview);
+            if (current && !bucketHasOps(current)) pendingRef.current.delete(item.key);
+          } else {
+            failures.push(`line ${item.edit.line}: ${result.error ?? 'edit failed'}`);
+          }
+        }
+        refreshCount();
+        if (failures.length > 0) throw new Error(failures.join('; '));
+        if (pendingRef.current.size === 0) history.clear();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast.error(`${t.inspector.saveFailed} ${msg}`);
+        throw err;
+      } finally {
+        setCommitting(false);
+      }
+    };
+
+    let tracked: Promise<void>;
+    tracked = run().finally(() => {
+      if (commitPromiseRef.current === tracked) commitPromiseRef.current = null;
+    });
+    commitPromiseRef.current = tracked;
+    return tracked;
   }, [applyEdits, history, refreshCount, t]);
 
   const cancelEdits = useCallback(() => {
@@ -839,41 +910,69 @@ export function InspectorProvider({
     };
   }, []);
 
-  // Re-apply buffered ops onto any `[data-slide-loc]` element that gets
-  // (re)mounted in the slide canvas. Without this, navigating to a
-  // different page and back drops the optimistic styles, since the
-  // page's DOM nodes are torn down on unmount even though the buffer
-  // (keyed by source line:col) survives.
+  // Re-apply saved draft previews first, then newer unsaved operations.
+  // Production renders the last published JSX, so this tab-local layer keeps
+  // a durable draft from appearing to disappear after page navigation.
   useEffect(() => {
     const root = document.querySelector<HTMLElement>('[data-inspector-root]');
     if (!root) return;
 
-    const applyBuffered = (el: HTMLElement) => {
-      const loc = el.dataset.slideLoc;
-      if (!loc) return;
-      const bucket = pendingRef.current.get(loc);
-      if (!bucket) return;
+    const instanceIds = (bucket: Bucket) => {
+      const ids = new Set(bucket.textOps.keys());
+      for (const op of bucket.rangeStyleOps.values()) ids.add(op.instanceId);
+      return ids;
+    };
+
+    const textFromHtml = (html: string) => {
+      const preview = document.createElement('span');
+      preview.innerHTML = html;
+      return readEditableText(preview);
+    };
+
+    const resolveInstanceId = (el: HTMLElement, bucket: Bucket): string | null => {
+      const ids = instanceIds(bucket);
+      const existing = readInstanceId(el);
+      if (existing && ids.has(existing)) return existing;
+
+      const current = readEditableText(el);
+      const candidates = Array.from(ids).filter((id) => {
+        const originalText = bucket.origTexts.get(id)?.value;
+        if (originalText !== undefined && originalText === current) return true;
+        const originalHtml = bucket.origHtmls.get(id);
+        if (originalHtml !== undefined && textFromHtml(originalHtml) === current) return true;
+        return Array.from(bucket.rangeStyleOps.values()).some(
+          (op) => op.instanceId === id && op.prevText === current,
+        );
+      });
+      if (candidates.length !== 1) return null;
+      el.setAttribute(INSTANCE_ID_ATTR, candidates[0]);
+      return candidates[0];
+    };
+
+    const applyBucket = (el: HTMLElement, bucket: Bucket) => {
       const style = el.style as unknown as Record<string, string>;
       for (const [key, op] of bucket.styleOps) {
         const v = op.value ?? '';
         if (style[key] !== v) style[key] = v;
       }
-      // Text replays per-instance: only the originally clicked DOM node
-      // (stamped with its `data-slide-instance-id`) gets the buffered
-      // value, so siblings of a reused component aren't clobbered.
-      const instanceId = readInstanceId(el);
+
+      const instanceId = resolveInstanceId(el, bucket);
       if (instanceId) {
-        const html = bucket.origHtmls.get(instanceId);
-        if (html !== undefined) {
-          replayDomTextRangeStyles(
-            el,
-            html,
-            Array.from(bucket.rangeStyleOps.values()).filter((op) => op.instanceId === instanceId),
-          );
-        }
         const textOp = bucket.textOps.get(instanceId);
-        if (textOp && readEditableText(el) !== textOp.value) {
-          setEditableText(el, textOp.value);
+        const ordered = [
+          ...Array.from(bucket.rangeStyleOps.values())
+            .filter((op) => op.instanceId === instanceId)
+            .map((op) => ({ kind: 'range' as const, op })),
+          ...(textOp ? [{ kind: 'text' as const, op: textOp }] : []),
+        ].sort((a, b) => a.op.seq - b.op.seq);
+        if (ordered.length > 0) {
+          const preview = document.createElement('span');
+          preview.innerHTML = bucket.origHtmls.get(instanceId) ?? el.innerHTML;
+          for (const item of ordered) {
+            if (item.kind === 'range') applyDomTextRangeStyle(preview, item.op);
+            else setEditableText(preview, item.op.value);
+          }
+          if (el.innerHTML !== preview.innerHTML) el.innerHTML = preview.innerHTML;
         }
       }
       for (const [attr, op] of bucket.attrOps) {
@@ -881,9 +980,18 @@ export function InspectorProvider({
       }
     };
 
+    const applyBuffered = (el: HTMLElement) => {
+      const loc = el.dataset.slideLoc;
+      if (!loc) return;
+      const committed = committedPreviewRef.current.get(loc);
+      if (committed) applyBucket(el, committed);
+      const pending = pendingRef.current.get(loc);
+      if (pending) applyBucket(el, pending);
+    };
+
     let observer: MutationObserver | null = null;
     const replayAll = () => {
-      if (pendingRef.current.size === 0) return;
+      if (pendingRef.current.size === 0 && committedPreviewRef.current.size === 0) return;
       observer?.disconnect();
       root.querySelectorAll<HTMLElement>('[data-slide-loc]').forEach(applyBuffered);
       observer?.observe(root, { childList: true, subtree: true });
@@ -894,6 +1002,24 @@ export function InspectorProvider({
     observer.observe(root, { childList: true, subtree: true });
     return () => observer?.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (pendingCount === 0) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [pendingCount]);
+
+  useEffect(() => {
+    if (!structuralLocked) return;
+    setActive(false);
+    setSelected(null);
+    setCropTarget(null);
+    setReplaceTarget(null);
+  }, [structuralLocked]);
 
   useEffect(() => {
     void pageIndex;
@@ -925,11 +1051,12 @@ export function InspectorProvider({
   }, [selected]);
 
   const toggle = useCallback(() => {
+    if (editingLocked) return;
     setActive((a) => {
       if (a) setSelected(null);
       return !a;
     });
-  }, []);
+  }, [editingLocked]);
 
   const cancel = useCallback(() => {
     setActive(false);
@@ -947,7 +1074,7 @@ export function InspectorProvider({
   }, []);
 
   useEffect(() => {
-    if (!authoringWritable) return;
+    if (!authoringWritable || editingLocked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLElement && e.target.matches('input, textarea')) return;
       if (e.key !== 'i' && e.key !== 'I') return;
@@ -955,7 +1082,7 @@ export function InspectorProvider({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [toggle]);
+  }, [editingLocked, toggle]);
 
   const openCrop = useCallback((anchor: HTMLImageElement) => {
     const loc = anchor.dataset.slideLoc;
@@ -996,9 +1123,11 @@ export function InspectorProvider({
       applyEdits,
       bufferOps,
       pendingCount,
+      hasPendingEdits,
       commitEdits,
       cancelEdits,
       committing,
+      editingLocked,
       openCrop,
       openReplace,
     }),
@@ -1018,9 +1147,11 @@ export function InspectorProvider({
       applyEdits,
       bufferOps,
       pendingCount,
+      hasPendingEdits,
       commitEdits,
       cancelEdits,
       committing,
+      editingLocked,
       openCrop,
       openReplace,
     ],
@@ -1162,17 +1293,23 @@ function parsePercent(s: string, fallback: number): number {
 
 export function InspectToggleButton() {
   const t = useLocale();
-  const { active, toggle } = useInspector();
+  const { active, toggle, editingLocked } = useInspector();
   if (!authoringEnabled) return null;
   return (
     <Button
       size="sm"
       variant={active ? 'default' : 'ghost'}
       onClick={toggle}
-      disabled={!authoringWritable}
-      aria-disabled={!authoringWritable}
+      disabled={!authoringWritable || editingLocked}
+      aria-disabled={!authoringWritable || editingLocked}
       data-inspector-ui
-      title={authoringWritable ? t.inspector.inspect : 'Read-only preview'}
+      title={
+        !authoringWritable
+          ? 'Read-only preview'
+          : editingLocked
+            ? 'Editing is locked while Studio saves or publishes.'
+            : t.inspector.inspect
+      }
     >
       <Crosshair className="size-3.5" />
       <span className="hidden md:inline">{t.inspector.inspect}</span>

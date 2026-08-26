@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils';
 type SaveCardProps = {
   dirty: boolean;
   committing: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   onSave: () => Promise<boolean> | boolean;
   onDiscard: () => void;
   unsavedLabel: React.ReactNode;
@@ -25,6 +27,8 @@ type SaveCardProps = {
 export function SaveCard({
   dirty,
   committing,
+  disabled = false,
+  disabledReason,
   onSave,
   onDiscard,
   unsavedLabel,
@@ -77,7 +81,7 @@ export function SaveCard({
               variant="ghost"
               className="text-muted-foreground hover:text-foreground"
               onClick={onUndo}
-              disabled={committing || !canUndo}
+              disabled={committing || disabled || !canUndo}
               aria-label={t.common.undo}
               title={t.common.undo}
             >
@@ -88,7 +92,7 @@ export function SaveCard({
               variant="ghost"
               className="text-muted-foreground hover:text-foreground"
               onClick={onRedo}
-              disabled={committing || !canRedo}
+              disabled={committing || disabled || !canRedo}
               aria-label={t.common.redo}
               title={t.common.redo}
             >
@@ -119,7 +123,8 @@ export function SaveCard({
             variant="ghost"
             className="text-muted-foreground hover:text-foreground"
             onClick={onDiscard}
-            disabled={committing || !dirty}
+            disabled={committing || disabled || !dirty}
+            title={disabled ? disabledReason : undefined}
           >
             {t.common.discard}
           </Button>
@@ -130,7 +135,8 @@ export function SaveCard({
             variant="brand"
             className="h-7 px-3"
             onClick={handleSave}
-            disabled={committing || !dirty}
+            disabled={committing || disabled || !dirty}
+            title={disabled ? disabledReason : undefined}
           >
             {committing ? (
               <>

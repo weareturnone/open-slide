@@ -16,7 +16,7 @@ export type EditOp =
   | { kind: 'replace-placeholder-with-image'; assetPath: string }
   | { kind: 'delete-element' };
 
-export type Edit = { line: number; column: number; ops: EditOp[] };
+export type Edit = { line: number; column: number; ops: EditOp[]; strict?: boolean };
 
 export type EditResult = { ok: boolean; error?: string };
 
@@ -35,7 +35,7 @@ export function useEditor(slideId: string, kind: ContentKind = 'slide') {
       const res = await fetch('/__edit', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, kind, line, column, ops }),
+        body: JSON.stringify({ slideId, kind, line, column, ops, strict: true }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string; changed?: boolean };
       if (!res.ok) {
@@ -57,7 +57,11 @@ export function useEditor(slideId: string, kind: ContentKind = 'slide') {
       const res = await fetch('/__edit/batch', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, kind, edits }),
+        body: JSON.stringify({
+          slideId,
+          kind,
+          edits: edits.map((edit) => ({ ...edit, strict: true })),
+        }),
       });
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -66,7 +70,12 @@ export function useEditor(slideId: string, kind: ContentKind = 'slide') {
       if (!res.ok) {
         throw new Error(body.error ?? `POST /__edit/batch → ${res.status}`);
       }
-      return body.results ?? [];
+      if (!Array.isArray(body.results) || body.results.length !== edits.length) {
+        throw new Error(
+          'Studio returned an incomplete save result. Your edits are still in this tab; try again.',
+        );
+      }
+      return body.results;
     },
     [slideId, kind],
   );

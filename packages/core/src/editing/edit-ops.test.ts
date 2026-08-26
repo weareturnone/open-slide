@@ -549,6 +549,90 @@ describe('applyEditBatch', () => {
     if (result.ok) throw new Error('expected failure');
     expect(result.editIndex).toBe(1);
   });
+
+  it('supports consecutive strict text saves at the original element location', () => {
+    const src = ['export default [() => (', '<h1>Old title</h1>', ')];', ''].join('\n');
+    const first = applyEditBatch(src, [
+      {
+        line: 2,
+        column: 0,
+        strict: true,
+        ops: [{ kind: 'set-text', value: 'A much longer title', prevText: 'Old title' }],
+      },
+    ]);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const second = applyEditBatch(first.source, [
+      {
+        line: 2,
+        column: 0,
+        strict: true,
+        ops: [{ kind: 'set-text', value: 'Final title', prevText: 'A much longer title' }],
+      },
+    ]);
+    if (!second.ok) throw new Error(`expected ok, got ${second.error}`);
+    expect(second.source).toContain('<h1>Final title</h1>');
+  });
+
+  it('supports consecutive strict crop saves at the original image location', () => {
+    const src = [
+      'export default [() => (',
+      '<img src="photo.jpg" alt="Portrait" style={{ objectFit: \'cover\' }} />',
+      ')];',
+      '',
+    ].join('\n');
+    const first = applyEditBatch(src, [
+      {
+        line: 2,
+        column: 0,
+        strict: true,
+        ops: [{ kind: 'set-style', key: 'objectPosition', value: '40% 50%' }],
+      },
+    ]);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const second = applyEditBatch(first.source, [
+      {
+        line: 2,
+        column: 0,
+        strict: true,
+        ops: [
+          {
+            kind: 'set-style',
+            key: 'objectViewBox',
+            value: 'inset(10% 12% 8% 14%)',
+          },
+        ],
+      },
+    ]);
+    if (!second.ok) throw new Error(`expected ok, got ${second.error}`);
+    expect(second.source).toContain("objectPosition: '40% 50%'");
+    expect(second.source).toContain("objectViewBox: 'inset(10% 12% 8% 14%)'");
+  });
+
+  it('fails closed when an earlier save shifts a later strict target', () => {
+    const line = '<div><h1>A</h1><img src="photo.jpg" alt="Portrait" /></div>';
+    const imageColumn = line.indexOf('<img');
+    const first = applyEditBatch(['export default [() => (', line, ')];', ''].join('\n'), [
+      {
+        line: 2,
+        column: line.indexOf('<h1'),
+        strict: true,
+        ops: [{ kind: 'set-text', value: 'A much longer heading', prevText: 'A' }],
+      },
+    ]);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const second = applyEditBatch(first.source, [
+      {
+        line: 2,
+        column: imageColumn,
+        strict: true,
+        ops: [{ kind: 'set-style', key: 'objectFit', value: 'cover' }],
+      },
+    ]);
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('expected failure');
+    expect(second.error).toMatch(/no JSX element at location/);
+    expect('source' in second).toBe(false);
+  });
 });
 
 describe('applyEdit / set-text', () => {

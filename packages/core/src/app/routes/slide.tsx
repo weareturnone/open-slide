@@ -791,7 +791,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
             </div>
 
             <div className="flex flex-1 items-center justify-end gap-1 md:ml-auto md:flex-none">
-              <HostedPublishButton />
+              <SlideHostedPublishButton />
               {view === 'slides' && (
                 <button
                   type="button"
@@ -1255,6 +1255,16 @@ function SelectionReporter() {
     import.meta.hot.send('open-slide:current', { selection });
   }, [selected]);
   return null;
+}
+
+function SlideHostedPublishButton() {
+  const { pendingCount, committing } = useInspector();
+  const disabledReason = committing
+    ? 'Wait for the current draft save to finish before publishing.'
+    : pendingCount > 0
+      ? 'Save or discard the changes in this tab before publishing.'
+      : null;
+  return <HostedPublishButton disabledReason={disabledReason} />;
 }
 
 function SlideViewportNavigation({

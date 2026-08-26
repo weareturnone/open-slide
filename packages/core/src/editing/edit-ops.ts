@@ -16,7 +16,7 @@ export type EditOp =
   | { kind: 'replace-placeholder-with-image'; assetPath: string }
   | { kind: 'delete-element' };
 
-export type SourceEdit = { line: number; column: number; ops: EditOp[] };
+export type SourceEdit = { line: number; column: number; ops: EditOp[]; strict?: boolean };
 
 export type ApplyEditResult =
   | { ok: true; source: string }
@@ -232,9 +232,22 @@ function findElementForEdit(
   line: number,
   column: number,
   ops: EditOp[],
+  strict = false,
 ): t.JSXElement | null {
-  const element = findInnermostJsxElement(ast, line, column);
+  const exact = findJsxByStart(ast, line, column);
   const prevText = fallbackTextForOps(ops);
+  if (strict) {
+    if (prevText === null) return exact;
+    if (
+      exact &&
+      (elementTextMatches(exact, prevText) || elementHasTextCandidate(ast, exact, prevText))
+    ) {
+      return exact;
+    }
+    return findUniqueElementByText(ast, prevText);
+  }
+
+  const element = exact ?? findInnermostJsxElement(ast, line, column);
   if (prevText === null) return element;
   if (
     hasOnlyTextOps(ops) &&
@@ -1446,12 +1459,13 @@ export function applyEdit(
   line: number,
   column: number,
   ops: EditOp[],
+  strict = false,
 ): ApplyEditResult {
   if (ops.length === 0) return { ok: true, source };
 
   const ast = parseSource(source);
   if (!ast) return { ok: false, status: 422, error: 'could not parse source' };
-  const element = findElementForEdit(ast, line, column, ops);
+  const element = findElementForEdit(ast, line, column, ops, strict);
   if (!element) return { ok: false, status: 422, error: 'no JSX element at location' };
 
   if (hasCropStyleOperation(ops)) {
@@ -1600,7 +1614,7 @@ export function applyEditBatch(source: string, edits: SourceEdit[]): ApplyEditBa
     .sort((a, b) => b.edit.line - a.edit.line || b.edit.column - a.edit.column);
   let next = source;
   for (const { edit, editIndex } of ordered) {
-    const result = applyEdit(next, edit.line, edit.column, edit.ops);
+    const result = applyEdit(next, edit.line, edit.column, edit.ops, edit.strict);
     if (!result.ok) return { ...result, editIndex };
     next = result.source;
   }

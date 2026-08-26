@@ -15,12 +15,13 @@ type EditBody = {
   line?: number;
   column?: number;
   ops?: EditOp[];
+  strict?: boolean;
 };
 
 type EditBatchBody = {
   slideId?: string;
   kind?: 'slide' | 'document';
-  edits?: Array<{ line?: number; column?: number; ops?: EditOp[] }>;
+  edits?: Array<{ line?: number; column?: number; ops?: EditOp[]; strict?: boolean }>;
 };
 
 export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void {
@@ -47,7 +48,7 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
           return json(res, 404, { error: 'slide not found' });
         }
 
-        const result = applyEdit(source, body.line, body.column ?? 0, body.ops);
+        const result = applyEdit(source, body.line, body.column ?? 0, body.ops, body.strict);
         if (!result.ok) return json(res, result.status, { error: result.error });
         const changed = result.source !== source;
         if (changed) await fs.writeFile(file, result.source, 'utf8');
@@ -106,6 +107,7 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
           line: edit.line ?? 0,
           column: edit.column ?? 0,
           ops: edit.ops ?? [],
+          strict: edit.strict,
         }));
         if (edits.some((edit) => edit.line < 1 || !Array.isArray(edit.ops))) {
           return json(res, 400, { error: 'invalid edit' });
