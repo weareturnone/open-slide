@@ -104,7 +104,11 @@ export function SaveCard({
           </div>
         )}
         {justSaved ? (
-          <span className="flex items-center gap-1.5 whitespace-nowrap px-2.5 text-[12px] font-medium text-foreground">
+          <span
+            className="flex items-center gap-1.5 whitespace-nowrap px-2.5 text-[12px] font-medium text-foreground"
+            role="status"
+            aria-live="polite"
+          >
             <Check className="size-3.5 shrink-0 text-[oklch(0.55_0.13_165)]" strokeWidth={2.5} />
             {resolvedSavedLabel}
           </span>

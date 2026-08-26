@@ -108,6 +108,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
   const [linkCopied, setLinkCopied] = useState(false);
   const linkCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [designOpen, setDesignOpen] = useState(false);
+  const [designSaveState, setDesignSaveState] = useState({ dirty: false, committing: false });
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [catalogInsertIndex, setCatalogInsertIndex] = useState<number | null>(null);
@@ -791,7 +792,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
             </div>
 
             <div className="flex flex-1 items-center justify-end gap-1 md:ml-auto md:flex-none">
-              <SlideHostedPublishButton />
+              <SlideHostedPublishButton designState={designSaveState} />
               {view === 'slides' && (
                 <button
                   type="button"
@@ -942,7 +943,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
               <AssetView slideId={slideId} kind={kind} />
             </div>
           ) : (
-            <DesignProvider slideId={slideId} kind={kind}>
+            <DesignProvider slideId={slideId} kind={kind} onSaveStateChange={setDesignSaveState}>
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <div className="flex min-h-0 flex-1 flex-col md:flex-row">
                   <ResizableRail
@@ -1257,14 +1258,25 @@ function SelectionReporter() {
   return null;
 }
 
-function SlideHostedPublishButton() {
-  const { pendingCount, committing } = useInspector();
+function SlideHostedPublishButton({
+  designState,
+}: {
+  designState: { dirty: boolean; committing: boolean };
+}) {
+  const inspector = useInspector();
+  const committing = inspector.committing || designState.committing;
+  const dirty = inspector.pendingCount > 0 || designState.dirty;
   const disabledReason = committing
     ? 'Wait for the current draft save to finish before publishing.'
-    : pendingCount > 0
+    : dirty
       ? 'Save or discard the changes in this tab before publishing.'
       : null;
-  return <HostedPublishButton disabledReason={disabledReason} />;
+  return (
+    <HostedPublishButton
+      disabledReason={disabledReason}
+      localDraftState={committing ? 'saving' : dirty ? 'unsaved' : null}
+    />
+  );
 }
 
 function SlideViewportNavigation({

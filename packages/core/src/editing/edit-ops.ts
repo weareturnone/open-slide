@@ -1,5 +1,6 @@
 import * as t from '@babel/types';
 import { parseSource, walkAll, walkJsx } from './babel-walk.ts';
+import { targetFingerprint } from './target-fingerprint.ts';
 
 export type EditOp =
   | { kind: 'set-style'; key: string; value: string | null; prevText?: string }
@@ -13,8 +14,8 @@ export type EditOp =
       prevText?: string;
     }
   | { kind: 'set-attr-asset'; attr: string; assetPath: string }
-  | { kind: 'replace-placeholder-with-image'; assetPath: string }
-  | { kind: 'delete-element' };
+  | { kind: 'replace-placeholder-with-image'; assetPath: string; targetFingerprint?: string }
+  | { kind: 'delete-element'; targetFingerprint?: string };
 
 export type SourceEdit = { line: number; column: number; ops: EditOp[]; strict?: boolean };
 
@@ -227,8 +228,55 @@ function elementHasTextCandidate(ast: t.File, element: t.JSXElement, prevText: s
   return collectElementTextCandidates(ast, element).some((candidate) => candidate.current === norm);
 }
 
+function elementAlreadyHasRequestedText(
+  ast: t.File,
+  element: t.JSXElement,
+  ops: EditOp[],
+): boolean {
+  if (!hasOnlyTextOps(ops)) return false;
+  const requested = ops[ops.length - 1];
+  if (requested?.kind !== 'set-text') return false;
+  return (
+    elementTextMatches(element, requested.value) ||
+    elementHasTextCandidate(ast, element, requested.value)
+  );
+}
+
+function fingerprintForOps(ops: EditOp[]): string | null {
+  for (const op of ops) {
+    if (
+      (op.kind === 'delete-element' || op.kind === 'replace-placeholder-with-image') &&
+      typeof op.targetFingerprint === 'string' &&
+      /^[0-9a-f]{16}$/.test(op.targetFingerprint)
+    ) {
+      return op.targetFingerprint;
+    }
+  }
+  return null;
+}
+
+function findUniqueElementByFingerprint(
+  ast: t.File,
+  source: string,
+  fingerprint: string,
+): t.JSXElement | null {
+  let match: t.JSXElement | null = null;
+  let ambiguous = false;
+  walkJsx(ast, (node) => {
+    if (!t.isJSXElement(node)) return;
+    if (targetFingerprint(source, node.start ?? 0, node.end ?? 0) !== fingerprint) return;
+    if (match) {
+      ambiguous = true;
+      return 'stop';
+    }
+    match = node;
+  });
+  return ambiguous ? null : match;
+}
+
 function findElementForEdit(
   ast: t.File,
+  source: string,
   line: number,
   column: number,
   ops: EditOp[],
@@ -237,10 +285,19 @@ function findElementForEdit(
   const exact = findJsxByStart(ast, line, column);
   const prevText = fallbackTextForOps(ops);
   if (strict) {
+    const fingerprint = fingerprintForOps(ops);
+    if (fingerprint) {
+      if (exact && targetFingerprint(source, exact.start ?? 0, exact.end ?? 0) === fingerprint) {
+        return exact;
+      }
+      return findUniqueElementByFingerprint(ast, source, fingerprint);
+    }
     if (prevText === null) return exact;
     if (
       exact &&
-      (elementTextMatches(exact, prevText) || elementHasTextCandidate(ast, exact, prevText))
+      (elementTextMatches(exact, prevText) ||
+        elementHasTextCandidate(ast, exact, prevText) ||
+        elementAlreadyHasRequestedText(ast, exact, ops))
     ) {
       return exact;
     }
@@ -1314,6 +1371,12 @@ function buildTextSplice(
   const norm = prevText.trim();
   const matches = candidates.filter((c) => c.current === norm);
   if (matches.length === 0) {
+    const alreadyApplied = candidates.filter((candidate) => candidate.current === value.trim());
+    // When the previous value is gone and the requested value is present,
+    // the exact-head guard means this is a retry of an edit that already
+    // landed. Return a semantic no-op even when another call site already
+    // shared the requested value; choosing one candidate would be ambiguous.
+    if (alreadyApplied.length > 0) return { from: 0, to: 0, text: '' };
     return { error: 'no text candidate matches the current value' };
   }
   if (matches.length > 1) {
@@ -1462,10 +1525,19 @@ export function applyEdit(
   strict = false,
 ): ApplyEditResult {
   if (ops.length === 0) return { ok: true, source };
+  if (
+    strict &&
+    ops.some(
+      (op) => op.kind === 'delete-element' || op.kind === 'replace-placeholder-with-image',
+    ) &&
+    !fingerprintForOps(ops)
+  ) {
+    return { ok: false, status: 422, error: 'destructive edit requires a target fingerprint' };
+  }
 
   const ast = parseSource(source);
   if (!ast) return { ok: false, status: 422, error: 'could not parse source' };
-  const element = findElementForEdit(ast, line, column, ops, strict);
+  const element = findElementForEdit(ast, source, line, column, ops, strict);
   if (!element) return { ok: false, status: 422, error: 'no JSX element at location' };
 
   if (hasCropStyleOperation(ops)) {

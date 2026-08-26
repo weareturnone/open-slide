@@ -3,7 +3,7 @@ import { useHistory } from '@/components/history-provider';
 import { useHostedOperation } from '@/components/hosted-operation-provider';
 import { SaveCard } from '@/components/panel/save-card';
 import { useDesignPanelState } from '@/components/style-panel/design-provider';
-import { authoringReadOnly } from '@/lib/authoring';
+import { authoringReadOnly, notifyAuthoringChanged } from '@/lib/authoring';
 import { format, plural, useLocale } from '@/lib/use-locale';
 import { useInspector } from './inspector-provider';
 
@@ -28,6 +28,9 @@ export function SaveBar() {
     if (designCount > 0) tasks.push(Promise.resolve(design.commit()));
     try {
       await Promise.all(tasks);
+      if (designCount > 0 && inspectorCount === 0) {
+        notifyAuthoringChanged({ previewingDraft: true });
+      }
       return !insp.hasPendingEdits();
     } catch {
       return false;

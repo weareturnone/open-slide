@@ -5,6 +5,7 @@ import {
   applyEditBatch,
   safeAssetIdentifier,
 } from './edit-ops.ts';
+import { targetFingerprint } from './target-fingerprint.ts';
 
 describe('applyEdit / set-style', () => {
   // Every JSX opening tag in these synthetic sources sits at column 0;
@@ -487,6 +488,14 @@ describe('applyEdit / set-style', () => {
 });
 
 describe('applyEdit / delete-element', () => {
+  it('requires a target fingerprint for strict destructive edits', () => {
+    const src = ['export default [() => (', '<div><span>remove</span></div>', ')];', ''].join('\n');
+    const result = applyEdit(src, 2, 5, [{ kind: 'delete-element' }], true);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/target fingerprint/);
+  });
+
   it('deletes a directly authored JSX child', () => {
     const src = [
       'export default [() => (',
@@ -509,6 +518,28 @@ describe('applyEdit / delete-element', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.error).toMatch(/directly authored child/);
+  });
+
+  it('does not delete a sibling that moved into a stale target location', () => {
+    const src = [
+      'export default [() => (',
+      '<div><img alt="first" /><img alt="second" /></div>',
+      ')];',
+      '',
+    ].join('\n');
+    const authored = '<img alt="first" />';
+    const start = src.indexOf(authored);
+    const op = {
+      kind: 'delete-element' as const,
+      targetFingerprint: targetFingerprint(src, start, start + authored.length),
+    };
+    const first = applyEdit(src, 2, 5, [op], true);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const retry = applyEdit(first.source, 2, 5, [op], true);
+    expect(retry.ok).toBe(false);
+    if (retry.ok) throw new Error('expected stale target failure');
+    expect(retry.error).toMatch(/no JSX element/);
+    expect(first.source).toContain('<img alt="second" />');
   });
 });
 
@@ -571,6 +602,62 @@ describe('applyEditBatch', () => {
     ]);
     if (!second.ok) throw new Error(`expected ok, got ${second.error}`);
     expect(second.source).toContain('<h1>Final title</h1>');
+  });
+
+  it('accepts a strict text retry after the first response was lost', () => {
+    const src = ['export default [() => (', '<h1>Old title</h1>', ')];', ''].join('\n');
+    const edit = {
+      line: 2,
+      column: 0,
+      strict: true,
+      ops: [{ kind: 'set-text' as const, value: 'Saved title', prevText: 'Old title' }],
+    };
+    const first = applyEditBatch(src, [edit]);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const retry = applyEditBatch(first.source, [edit]);
+    if (!retry.ok) throw new Error(`expected ok, got ${retry.error}`);
+    expect(retry.source).toBe(first.source);
+  });
+
+  it('rebinds a stale strict text location when the previous text is unique', () => {
+    const src = [
+      'export default [() => (',
+      '<div><h1>Unique title</h1><p>Body</p></div>',
+      ')];',
+      '',
+    ].join('\n');
+    const result = applyEditBatch(src, [
+      {
+        line: 99,
+        column: 0,
+        strict: true,
+        ops: [{ kind: 'set-text', value: 'Updated title', prevText: 'Unique title' }],
+      },
+    ]);
+    if (!result.ok) throw new Error(`expected ok, got ${result.error}`);
+    expect(result.source).toContain('<h1>Updated title</h1>');
+    expect(result.source).toContain('<p>Body</p>');
+  });
+
+  it('rejects a stale strict text location when the previous text is ambiguous', () => {
+    const src = [
+      'export default [() => (',
+      '<div><p>Repeated</p><p>Repeated</p></div>',
+      ')];',
+      '',
+    ].join('\n');
+    const result = applyEditBatch(src, [
+      {
+        line: 99,
+        column: 0,
+        strict: true,
+        ops: [{ kind: 'set-text', value: 'Updated', prevText: 'Repeated' }],
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.status).toBe(422);
+    expect('source' in result).toBe(false);
   });
 
   it('supports consecutive strict crop saves at the original image location', () => {
@@ -1234,6 +1321,61 @@ describe('applyEdit / set-text', () => {
     expect(r.source).toContain('<Eyebrow>Second</Eyebrow>');
   });
 
+  it('accepts a lost-response retry among sibling children-slot call sites', () => {
+    const src = [
+      'const Eyebrow = ({ children }) => (',
+      '  <div>{children}</div>',
+      ');',
+      'export default [() => (',
+      '  <section>',
+      '    <Eyebrow>One</Eyebrow>',
+      '    <Eyebrow>Two</Eyebrow>',
+      '  </section>',
+      ')];',
+      '',
+    ].join('\n');
+    const edit = {
+      line: 2,
+      column: 2,
+      strict: true,
+      ops: [{ kind: 'set-text' as const, value: 'Second', prevText: 'Two' }],
+    };
+    const first = applyEditBatch(src, [edit]);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const retry = applyEditBatch(first.source, [edit]);
+    if (!retry.ok) throw new Error(`expected ok, got ${retry.error}`);
+    expect(retry.source).toBe(first.source);
+    expect(retry.source).toContain('<Eyebrow>One</Eyebrow>');
+    expect(retry.source).toContain('<Eyebrow>Second</Eyebrow>');
+  });
+
+  it('accepts a lost-response retry when another call site already has the requested text', () => {
+    const src = [
+      'const Eyebrow = ({ children }) => (',
+      '  <div>{children}</div>',
+      ');',
+      'export default [() => (',
+      '  <section>',
+      '    <Eyebrow>Second</Eyebrow>',
+      '    <Eyebrow>Two</Eyebrow>',
+      '  </section>',
+      ')];',
+      '',
+    ].join('\n');
+    const edit = {
+      line: 2,
+      column: 2,
+      strict: true,
+      ops: [{ kind: 'set-text' as const, value: 'Second', prevText: 'Two' }],
+    };
+    const first = applyEditBatch(src, [edit]);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const retry = applyEditBatch(first.source, [edit]);
+    if (!retry.ok) throw new Error(`expected ok, got ${retry.error}`);
+    expect(retry.source).toBe(first.source);
+    expect(retry.source.match(/<Eyebrow>Second<\/Eyebrow>/g)).toHaveLength(2);
+  });
+
   it('bails on a children-slot element when prevText is missing and call sites differ', () => {
     const src = [
       'const Eyebrow = ({ children }) => (',
@@ -1590,6 +1732,30 @@ describe('applyEdit / replace-placeholder-with-image', () => {
       "<img src={hero} alt='Product hero' style={{ width: 1280, height: 720, objectFit: 'cover', objectPosition: '50% 50%' }} />",
     );
     expect(r.source).not.toContain('<ImagePlaceholder');
+  });
+
+  it('does not replace a sibling that moved into a stale placeholder location', () => {
+    const src = [
+      "import { ImagePlaceholder } from '@open-slide/core';",
+      'export default [() => (',
+      '<div><ImagePlaceholder hint="first" /><ImagePlaceholder hint="second" /></div>',
+      ')];',
+      '',
+    ].join('\n');
+    const authored = '<ImagePlaceholder hint="first" />';
+    const start = src.indexOf(authored);
+    const op = {
+      kind: 'replace-placeholder-with-image' as const,
+      assetPath: './assets/hero.png',
+      targetFingerprint: targetFingerprint(src, start, start + authored.length),
+    };
+    const first = applyEdit(src, 3, 5, [op], true);
+    if (!first.ok) throw new Error(`expected ok, got ${first.error}`);
+    const retry = applyEdit(first.source, 3, 5, [op], true);
+    expect(retry.ok).toBe(false);
+    if (retry.ok) throw new Error('expected stale target failure');
+    expect(retry.error).toMatch(/no JSX element/);
+    expect(first.source).toContain('<ImagePlaceholder hint="second" />');
   });
 
   it('reuses an existing import for the same asset path', () => {

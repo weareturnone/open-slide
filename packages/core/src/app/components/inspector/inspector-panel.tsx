@@ -30,7 +30,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Toggle } from '@/components/ui/toggle';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { notifyAuthoringChanged } from '@/lib/authoring';
 import { findSlideSource } from '@/lib/inspector/fiber';
 import type { EditOp } from '@/lib/inspector/use-editor';
 import { useAgentSocketConnected } from '@/lib/use-agent-socket';
@@ -96,8 +95,12 @@ export function InspectorPanel() {
     if (!selected) return;
     const target = resolveSelectedTarget(selected, slideId);
     try {
-      await applyEdit(target.line, target.column, [{ kind: 'delete-element' }]);
-      notifyAuthoringChanged();
+      await applyEdit(target.line, target.column, [
+        {
+          kind: 'delete-element',
+          targetFingerprint: target.anchor.dataset.slideTarget,
+        },
+      ]);
       if (target.anchor.isConnected) target.anchor.remove();
       setSelected(null);
       toast.success('Element deleted');
@@ -362,6 +365,7 @@ export function InspectorPanel() {
               hint={pinSnapshot.placeholder.hint}
               line={pinSelected.line}
               column={pinSelected.column}
+              targetFingerprint={pinSelected.anchor.dataset.slideTarget}
               applyEdit={applyEdit}
             />
           </Section>
@@ -828,12 +832,14 @@ function PlaceholderField({
   hint,
   line,
   column,
+  targetFingerprint,
   applyEdit,
 }: {
   slideId: string;
   hint: string;
   line: number;
   column: number;
+  targetFingerprint?: string;
   applyEdit: (line: number, column: number, ops: EditOp[]) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -870,6 +876,7 @@ function PlaceholderField({
                 {
                   kind: 'replace-placeholder-with-image',
                   assetPath,
+                  targetFingerprint,
                 },
               ]);
             } finally {

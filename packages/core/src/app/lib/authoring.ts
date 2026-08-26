@@ -7,9 +7,29 @@ export const authoringReadOnly = !import.meta.env.DEV && config.authoring?.readO
 export const authoringWritable = authoringEnabled && !authoringReadOnly;
 
 export const AUTHORING_CHANGED_EVENT = 'open-slide:authoring-changed';
+export const AUTHORING_MUTATION_EVENT = 'open-slide:authoring-mutation';
 
-export function notifyAuthoringChanged(): void {
-  window.dispatchEvent(new Event(AUTHORING_CHANGED_EVENT));
+export type AuthoringVersionSnapshot = {
+  draftSha: string;
+  mainSha: string;
+  deployedSha?: string | null;
+  hasDraftChanges: boolean;
+  readOnly?: boolean;
+};
+
+export type AuthoringChangedDetail = {
+  version?: AuthoringVersionSnapshot;
+  previewingDraft?: boolean;
+};
+
+export function notifyAuthoringChanged(detail?: AuthoringChangedDetail): void {
+  window.dispatchEvent(
+    new CustomEvent<AuthoringChangedDetail>(AUTHORING_CHANGED_EVENT, { detail }),
+  );
+}
+
+export function notifyAuthoringMutation(phase: 'start' | 'finish'): void {
+  window.dispatchEvent(new CustomEvent(AUTHORING_MUTATION_EVENT, { detail: { phase } }));
 }
 
 export function pageComponentIdentities(
