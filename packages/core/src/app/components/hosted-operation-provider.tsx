@@ -428,7 +428,7 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
       const startedAt = Date.now();
       setState({
         ...initialState,
-        phase: 'saving',
+        phase: 'publishing',
         label: options.label,
         startedAt,
       });

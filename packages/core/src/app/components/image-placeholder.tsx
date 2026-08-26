@@ -1,7 +1,12 @@
 import { type CSSProperties, type HTMLAttributes, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { uploadWithAutoRename } from '@/lib/assets';
-import { authoringWritable } from '@/lib/authoring';
+import {
+  type AuthoringVersionSnapshot,
+  authoringWritable,
+  notifyAuthoringChanged,
+  notifyAuthoringMutation,
+} from '@/lib/authoring';
 import { useLocale } from '@/lib/use-locale';
 
 export type ImagePlaceholderProps = {
@@ -64,9 +69,13 @@ export function ImagePlaceholder({
           const column = Number(loc.slice(idx + 1));
           if (!Number.isFinite(line) || !Number.isFinite(column)) return;
           setUploading(true);
-          handleDrop(slideId, file, line, column, kind)
+          notifyAuthoringMutation('start');
+          handleDrop(slideId, file, line, column, kind, root.dataset.slideTarget)
             .catch(() => toast.error(t.imagePlaceholder.uploadFailed))
-            .finally(() => setUploading(false));
+            .finally(() => {
+              notifyAuthoringMutation('finish');
+              setUploading(false);
+            });
         },
       }
     : null;
@@ -214,6 +223,7 @@ async function handleDrop(
   line: number,
   column: number,
   kind: 'slide' | 'document',
+  targetFingerprint?: string,
 ) {
   const { ok, entry } = await uploadWithAutoRename(slideId, file, kind);
   if (!ok || !entry) throw new Error('upload failed');
@@ -225,10 +235,26 @@ async function handleDrop(
       kind,
       line,
       column,
-      ops: [{ kind: 'replace-placeholder-with-image', assetPath: `./assets/${entry.name}` }],
+      ops: [
+        {
+          kind: 'replace-placeholder-with-image',
+          assetPath: `./assets/${entry.name}`,
+          targetFingerprint,
+        },
+      ],
     }),
   });
-  if (!res.ok) throw new Error(`edit failed (${res.status})`);
+  const body = (await res.json().catch(() => ({}))) as Partial<AuthoringVersionSnapshot> & {
+    error?: string;
+  };
+  if (!res.ok) throw new Error(body.error ?? `edit failed (${res.status})`);
+  const version =
+    typeof body.draftSha === 'string' &&
+    typeof body.mainSha === 'string' &&
+    typeof body.hasDraftChanges === 'boolean'
+      ? (body as AuthoringVersionSnapshot)
+      : undefined;
+  notifyAuthoringChanged({ version, previewingDraft: true });
 }
 
 function PlaceholderIcon() {

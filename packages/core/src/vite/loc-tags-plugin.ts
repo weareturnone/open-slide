@@ -3,6 +3,7 @@ import { parse as babelParse } from '@babel/parser';
 import * as t from '@babel/types';
 import type { Plugin } from 'vite';
 import { walkAll, walkJsx } from '../editing/babel-walk.ts';
+import { targetFingerprint } from '../editing/target-fingerprint.ts';
 
 // Inject `data-slide-loc="<line>:<col>"` onto every host JSX element in
 // slide source files so the inspector can map a click straight to a
@@ -174,10 +175,9 @@ function collectForwardingComponents(ast: t.File): Set<string> {
   return components;
 }
 
-function alreadyTagged(opening: t.JSXOpeningElement): boolean {
+function hasAttribute(opening: t.JSXOpeningElement, name: string): boolean {
   return opening.attributes.some(
-    (attr) =>
-      t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name) && attr.name.name === 'data-slide-loc',
+    (attr) => t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name) && attr.name.name === name,
   );
 }
 
@@ -199,10 +199,20 @@ export function injectLocTags(code: string): string | null {
     if (!t.isJSXElement(node) || !node.loc) return;
     const opening = node.openingElement;
     const name = opening.name;
-    if (!isTaggableJsxName(name, forwardingComponents) || alreadyTagged(opening)) return;
+    if (!isTaggableJsxName(name, forwardingComponents)) return;
+    const attributes: string[] = [];
+    if (!hasAttribute(opening, 'data-slide-loc')) {
+      attributes.push(`data-slide-loc="${node.loc.start.line}:${node.loc.start.column}"`);
+    }
+    if (!hasAttribute(opening, 'data-slide-target')) {
+      attributes.push(
+        `data-slide-target="${targetFingerprint(code, node.start ?? 0, node.end ?? 0)}"`,
+      );
+    }
+    if (attributes.length === 0) return;
     insertions.push({
       offset: name.end ?? 0,
-      text: ` data-slide-loc="${node.loc.start.line}:${node.loc.start.column}"`,
+      text: ` ${attributes.join(' ')}`,
     });
   });
 

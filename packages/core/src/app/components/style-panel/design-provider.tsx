@@ -47,10 +47,12 @@ export function DesignProvider({
   slideId,
   children,
   kind = 'slide',
+  onSaveStateChange,
 }: {
   slideId: string;
   children: ReactNode;
   kind?: ContentKind;
+  onSaveStateChange?: (state: { dirty: boolean; committing: boolean }) => void;
 }) {
   const { design, exists, warning, loaded, save } = useDesignFetch(slideId, kind);
   const [draft, setDraft] = useState<DesignSystem | null>(null);
@@ -67,6 +69,15 @@ export function DesignProvider({
     if (!draft || !design) return false;
     return JSON.stringify(draft) !== JSON.stringify(design);
   }, [draft, design]);
+
+  useEffect(() => {
+    onSaveStateChange?.({ dirty, committing });
+  }, [dirty, committing, onSaveStateChange]);
+
+  useEffect(
+    () => () => onSaveStateChange?.({ dirty: false, committing: false }),
+    [onSaveStateChange],
+  );
 
   const update = useCallback(
     (mut: (d: DesignSystem) => void, coalesceKey?: string) => {

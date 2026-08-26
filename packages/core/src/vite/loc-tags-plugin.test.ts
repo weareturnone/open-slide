@@ -31,7 +31,7 @@ describe('injectLocTags', () => {
     const src = ['export default [() => (', '  <div>hello</div>', ')];', ''].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<div data-slide-loc="2:2">hello</div>');
+    expect(out).toMatch(/<div data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}">hello<\/div>/);
   });
 
   it('skips capitalized component invocations', () => {
@@ -52,12 +52,12 @@ describe('injectLocTags', () => {
     ].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<div data-slide-loc="2:2">');
-    expect(out).toContain('<h1 data-slide-loc="3:4">Hi</h1>');
-    expect(out).toContain('<p data-slide-loc="4:4">World</p>');
+    expect(out).toMatch(/<div data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}">/);
+    expect(out).toMatch(/<h1 data-slide-loc="3:4" data-slide-target="[0-9a-f]{16}">Hi<\/h1>/);
+    expect(out).toMatch(/<p data-slide-loc="4:4" data-slide-target="[0-9a-f]{16}">World<\/p>/);
   });
 
-  it('skips elements that already have data-slide-loc', () => {
+  it('preserves an existing data-slide-loc while adding a target fingerprint', () => {
     const src = [
       'export default [() => (',
       '  <div data-slide-loc="2:2">already</div>',
@@ -65,21 +65,26 @@ describe('injectLocTags', () => {
       '',
     ].join('\n');
     const out = injectLocTags(src);
-    expect(out).toBeNull();
+    if (out === null) throw new Error('expected fingerprint transform');
+    expect(out).toMatch(
+      /<div data-slide-target="[0-9a-f]{16}" data-slide-loc="2:2">already<\/div>/,
+    );
   });
 
   it('inserts after the tag name, before any other attributes', () => {
     const src = ['export default [() => (', '  <div className="foo">x</div>', ')];', ''].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<div data-slide-loc="2:2" className="foo">x</div>');
+    expect(out).toMatch(
+      /<div data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}" className="foo">x<\/div>/,
+    );
   });
 
   it('handles self-closing host elements', () => {
     const src = ['export default [() => (', '  <img src="x" />', ')];', ''].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<img data-slide-loc="2:2" src="x" />');
+    expect(out).toMatch(/<img data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}" src="x" \/>/);
   });
 
   it('returns null when source has no host elements', () => {
@@ -99,8 +104,10 @@ describe('injectLocTags', () => {
     ].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<h1 data-slide-loc="3:4">Title</h1>');
-    expect(out).toContain('<span data-slide-loc="4:12">nested</span>');
+    expect(out).toMatch(/<h1 data-slide-loc="3:4" data-slide-target="[0-9a-f]{16}">Title<\/h1>/);
+    expect(out).toMatch(
+      /<span data-slide-loc="4:12" data-slide-target="[0-9a-f]{16}">nested<\/span>/,
+    );
     expect(out).not.toContain('<Layout data-slide-loc');
     expect(out).not.toContain('<SubBox data-slide-loc');
   });
@@ -111,7 +118,9 @@ describe('injectLocTags', () => {
     );
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<ImagePlaceholder data-slide-loc="2:2" hint="hero" />');
+    expect(out).toMatch(
+      /<ImagePlaceholder data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}" hint="hero" \/>/,
+    );
   });
 
   it('does not tag other PascalCase components alongside ImagePlaceholder', () => {
@@ -143,7 +152,9 @@ describe('injectLocTags', () => {
     ].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<SharedImage data-slide-loc="6:22" src="hero.png" />');
+    expect(out).toMatch(
+      /<SharedImage data-slide-loc="6:22" data-slide-target="[0-9a-f]{16}" src="hero.png" \/>/,
+    );
   });
 
   it('tags a local component that forwards style directly', () => {
@@ -157,7 +168,7 @@ describe('injectLocTags', () => {
     ].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<SharedImage data-slide-loc="5:22" />');
+    expect(out).toMatch(/<SharedImage data-slide-loc="5:22" data-slide-target="[0-9a-f]{16}" \/>/);
   });
 
   it('tags a local component with defaulted props and a defaulted style binding', () => {
@@ -171,7 +182,7 @@ describe('injectLocTags', () => {
     ].join('\n');
     const out = injectLocTags(src);
     if (out === null) throw new Error('expected transform');
-    expect(out).toContain('<SharedImage data-slide-loc="5:22" />');
+    expect(out).toMatch(/<SharedImage data-slide-loc="5:22" data-slide-target="[0-9a-f]{16}" \/>/);
   });
 
   it('does not tag a local component that does not forward its rest props', () => {
