@@ -58,6 +58,15 @@ export class HostedStudioError extends Error {
   }
 }
 
+export function assertHostedVersionWritable(version: Pick<HostedVersionState, 'readOnly'>): void {
+  if (version.readOnly) {
+    throw new HostedStudioError(
+      { code: 'STUDIO_READ_ONLY', message: 'This preview is read-only.' },
+      'This preview is read-only.',
+    );
+  }
+}
+
 const POLL_INTERVAL_MS = 3_000;
 const DELAYED_POLL_INTERVAL_MS = 15_000;
 const DEPLOYMENT_SETTLE_MS = 5_000;

@@ -23,20 +23,25 @@ const servers: ChildProcess[] = [];
 
 test.beforeAll(async () => {
   test.setTimeout(600_000);
-  for (const [name, variant] of Object.entries(variants)) {
-    const projectDir = prepareScratchProject(`hosted-${name}`);
-    await fs.writeFile(
-      path.join(projectDir, 'open-slide.config.ts'),
-      `export { default } from './configs/${variant.config}.ts';\n`,
-    );
-    const result = await runCli(['build'], projectDir);
-    expect(result.code, result.stderr).toBe(0);
-    const server = startCliServer(
-      ['preview', '--host', '127.0.0.1', '--port', String(variant.port)],
-      projectDir,
-    );
-    servers.push(server);
-    await waitForHttpOk(`http://127.0.0.1:${variant.port}/`);
+  try {
+    for (const [name, variant] of Object.entries(variants)) {
+      const projectDir = prepareScratchProject(`hosted-${name}`);
+      await fs.writeFile(
+        path.join(projectDir, 'open-slide.config.ts'),
+        `export { default } from './configs/${variant.config}.ts';\n`,
+      );
+      const result = await runCli(['build'], projectDir);
+      expect(result.code, result.stderr).toBe(0);
+      const server = startCliServer(
+        ['preview', '--host', '127.0.0.1', '--port', String(variant.port)],
+        projectDir,
+      );
+      servers.push(server);
+      await waitForHttpOk(`http://127.0.0.1:${variant.port}/`);
+    }
+  } catch (error) {
+    await Promise.allSettled(servers.splice(0).map((server) => stopServer(server)));
+    throw error;
   }
 });
 
@@ -56,7 +61,15 @@ async function fulfillJson(route: Route, body: unknown): Promise<void> {
   });
 }
 
-async function mockVersionStatus(page: Page, readOnly = false): Promise<void> {
+type MockVersionState = {
+  hasDraftChanges?: boolean;
+  readOnly?: boolean;
+};
+
+async function mockVersionStatus(
+  page: Page,
+  state: MockVersionState | (() => MockVersionState) = {},
+): Promise<void> {
   await page.route('**/studio/status**', async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.has('deploymentOnly')) {
@@ -79,12 +92,13 @@ async function mockVersionStatus(page: Page, readOnly = false): Promise<void> {
       });
       return;
     }
+    const current = typeof state === 'function' ? state() : state;
     await fulfillJson(route, {
       draftSha: DRAFT_SHA,
       mainSha: MAIN_SHA,
       deployedSha: MAIN_SHA,
-      hasDraftChanges: false,
-      readOnly,
+      hasDraftChanges: current.hasDraftChanges ?? false,
+      readOnly: current.readOnly ?? false,
     });
   });
 }
@@ -205,7 +219,7 @@ test.describe('hosted authoring adapters', () => {
   });
 
   test('blocks mutation dispatch in read-only previews', async ({ page }) => {
-    await mockVersionStatus(page, true);
+    await mockVersionStatus(page, { hasDraftChanges: true, readOnly: true });
     const mutationRequests: string[] = [];
     page.on('request', (request) => {
       if (request.method() !== 'GET') mutationRequests.push(`${request.method()} ${request.url()}`);
@@ -228,7 +242,13 @@ test.describe('hosted authoring adapters', () => {
     await expect(page.getByRole('button', { name: 'Publish all' })).toBeDisabled();
 
     await page.getByRole('button', { name: 'New deck' }).click();
-    await expect(page.getByRole('button', { name: 'Create deck' })).toBeDisabled();
+    await page.getByLabel('Title').fill('Blocked but valid');
+    const create = page.getByRole('button', { name: 'Create deck' });
+    await expect(create).toBeDisabled();
+    await create.evaluate((element: HTMLButtonElement) => {
+      element.disabled = false;
+      element.click();
+    });
     await page.getByRole('button', { name: 'Cancel' }).click();
 
     const alphaCard = page.locator('li').filter({
@@ -241,5 +261,60 @@ test.describe('hosted authoring adapters', () => {
     await duplicate.evaluate((element: HTMLElement) => element.click());
     await page.waitForTimeout(100);
     expect(mutationRequests).toEqual([]);
+  });
+
+  test('rechecks server-reported read-only state before publish dispatch', async ({ page }) => {
+    let readOnly = false;
+    await mockVersionStatus(page, () => ({ hasDraftChanges: true, readOnly }));
+    const publishBodies: unknown[] = [];
+    await page.route('**/studio/publish', async (route) => {
+      publishBodies.push(route.request().postDataJSON());
+      await fulfillJson(route, { mainSha: TARGET_SHA });
+    });
+
+    await page.goto(baseUrl('writable'));
+    const publish = page.getByRole('button', { name: 'Publish all' });
+    await expect(publish).toBeEnabled();
+
+    readOnly = true;
+    await publish.click();
+    await page.waitForTimeout(250);
+
+    expect(publishBodies).toEqual([]);
+    await expect(page.getByRole('alert').getByText('This preview is read-only.')).toBeVisible();
+    await expect(page.getByRole('status').getByText('Read-only preview')).toBeVisible();
+  });
+
+  test('blocks otherwise-valid structural creation when runtime status becomes read-only', async ({
+    page,
+  }) => {
+    await mockVersionStatus(page, { readOnly: true });
+    const createBodies: unknown[] = [];
+    await page.route('**/studio/catalog**', async (route) => {
+      await fulfillJson(route, {
+        entries: [
+          {
+            id: 'statement',
+            name: 'Statement',
+            description: 'One statement page.',
+            preview: { kind: 'text', title: 'Statement', body: 'One statement page.' },
+          },
+        ],
+      });
+    });
+    await page.route('**/studio/decks', async (route) => {
+      createBodies.push(route.request().postDataJSON());
+      await fulfillJson(route, {});
+    });
+
+    await page.goto(baseUrl('writable'));
+    await page.getByRole('button', { name: 'New deck' }).click();
+    await page.getByLabel('Title').fill('Runtime locked');
+    const create = page.getByRole('button', { name: 'Create deck' });
+    await expect(create).toBeEnabled();
+    await create.click();
+
+    await expect(page.getByRole('alert').getByText('This preview is read-only.')).toBeVisible();
+    expect(createBodies).toEqual([]);
   });
 });

@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { authoringReadOnly } from '@/lib/authoring';
 import {
+  assertHostedVersionWritable,
   deployedStudioUrl,
   fetchHostedVersion,
   type HostedOperationReceipt,
@@ -311,12 +312,7 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
       let durableState: OperationState | null = null;
       try {
         const version = await fetchHostedVersion(publishConfig.statusEndpoint);
-        if (version.readOnly) {
-          throw new HostedStudioError(
-            { code: 'STUDIO_READ_ONLY', message: 'This preview is read-only.' },
-            'This preview is read-only.',
-          );
-        }
+        assertHostedVersionWritable(version);
         const suppliedBody =
           typeof options.body === 'function' ? options.body(operationId) : options.body;
         const response = await fetch(options.endpoint, {

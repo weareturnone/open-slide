@@ -10,6 +10,7 @@ import {
   authoringReadOnly,
 } from '@/lib/authoring';
 import {
+  assertHostedVersionWritable,
   fetchHostedVersion,
   type HostedVersionState,
   publishHostedDraft,
@@ -80,6 +81,7 @@ export function HostedPublishButton({
         action: async () => {
           const current = await refresh();
           if (!current) throw new Error('Studio could not check the saved draft.');
+          assertHostedVersionWritable(current);
           return {
             targetSha: current.hasDraftChanges
               ? await publishHostedDraft(publishConfig, current.draftSha)
@@ -110,13 +112,15 @@ export function HostedPublishButton({
           ? 'unavailable'
           : !version
             ? 'checking'
-            : version.hasDraftChanges
-              ? previewingDraft
-                ? 'draft-preview'
-                : 'draft-production'
-              : version.deployedSha !== version.mainSha
-                ? 'deployment-pending'
-                : 'live';
+            : version.readOnly
+              ? 'read-only'
+              : version.hasDraftChanges
+                ? previewingDraft
+                  ? 'draft-preview'
+                  : 'draft-production'
+                : version.deployedSha !== version.mainSha
+                  ? 'deployment-pending'
+                  : 'live';
   const statusCopy = {
     publishing: {
       label: 'Publishing',
@@ -137,6 +141,10 @@ export function HostedPublishButton({
     checking: {
       label: 'Checking',
       title: 'Studio is checking whether this page matches the published source.',
+    },
+    'read-only': {
+      label: 'Read-only preview',
+      title: 'This deployment cannot publish repository changes.',
     },
     'draft-preview': {
       label: 'Draft saved · previewing in this tab',
@@ -159,9 +167,11 @@ export function HostedPublishButton({
     disabledReason ??
     (statusUnavailable
       ? 'Studio could not check the saved draft. Retry status before publishing.'
-      : version?.hasDraftChanges
-        ? undefined
-        : 'No unpublished draft changes');
+      : version?.readOnly
+        ? 'This preview is read-only.'
+        : version?.hasDraftChanges
+          ? undefined
+          : 'No unpublished draft changes');
 
   return (
     <div className="flex items-center gap-1.5">
@@ -192,6 +202,7 @@ export function HostedPublishButton({
             structuralLocked ||
             statusUnavailable ||
             authoringReadOnly ||
+            version?.readOnly === true ||
             Boolean(disabledReason)
           }
           onClick={() => void publish()}

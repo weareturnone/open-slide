@@ -1,5 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { waitForHostedDeployment } from './hosted-deployment.ts';
+import { assertHostedVersionWritable, waitForHostedDeployment } from './hosted-deployment.ts';
+
+describe('assertHostedVersionWritable', () => {
+  it('fails closed on server-reported read-only status', () => {
+    expect(() => assertHostedVersionWritable({ readOnly: true })).toThrowError(
+      expect.objectContaining({
+        code: 'STUDIO_READ_ONLY',
+        message: 'This preview is read-only.',
+      }),
+    );
+  });
+
+  it('allows writable or omitted runtime status', () => {
+    expect(() => assertHostedVersionWritable({ readOnly: false })).not.toThrow();
+    expect(() => assertHostedVersionWritable({})).not.toThrow();
+  });
+});
 
 describe('waitForHostedDeployment', () => {
   const targetSha = 'a'.repeat(40);
