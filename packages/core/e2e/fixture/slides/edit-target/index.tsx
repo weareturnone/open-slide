@@ -37,6 +37,12 @@ const SharedCropImage = ({ src, alt, style, ...imageProps }: SharedCropImageProp
   />
 );
 
+const NestedIdentityLeaf = ({ label }: { label: string }) => (
+  <span data-identity-label={label}>{label}</span>
+);
+
+const NestedIdentityCard = ({ label }: { label: string }) => <NestedIdentityLeaf label={label} />;
+
 const Only: Page = () => (
   <div style={fill}>
     <h1 style={{ fontSize: 96, margin: 0 }}>Editable headline</h1>
@@ -49,6 +55,10 @@ const Only: Page = () => (
     <div style={{ display: 'flex', gap: 24 }}>
       <SharedCropImage src={cropImage} alt="Shared crop landscape" />
       <SharedCropImage src={portraitCropImage} alt="Shared crop portrait" />
+    </div>
+    <div style={{ display: 'flex', gap: 24, fontSize: 24 }}>
+      <NestedIdentityCard label="Nested identity left" />
+      <NestedIdentityCard label="Nested identity right" />
     </div>
   </div>
 );
