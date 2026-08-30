@@ -13,6 +13,11 @@ import {
 import { Button } from '@/components/ui/button';
 import { authoringReadOnly } from '@/lib/authoring';
 import {
+  type AuthoringMutationKind,
+  authoringRequestHash,
+  parseHostedOperationReceipt,
+} from '@/lib/authoring-protocol';
+import {
   assertHostedVersionWritable,
   deployedStudioUrl,
   fetchHostedVersion,
@@ -52,6 +57,7 @@ type StructuralMutationOptions<T extends Record<string, unknown>> = {
   label: string;
   endpoint: string;
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  protocolKind?: AuthoringMutationKind;
   body: Record<string, unknown> | ((operationId: string) => Record<string, unknown>);
   onCommitted?: () => void;
   destination?: (result: T, status: HostedOperationStatus) => string | URL | null;
@@ -315,21 +321,50 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
         assertHostedVersionWritable(version);
         const suppliedBody =
           typeof options.body === 'function' ? options.body(operationId) : options.body;
+        const coordinatedBody = {
+          ...suppliedBody,
+          operationId,
+          expectedDraftSha: version.draftSha,
+          expectedMainSha: version.mainSha,
+        };
+        const requestHash = await authoringRequestHash(
+          options.method,
+          options.endpoint,
+          coordinatedBody,
+        );
         const response = await fetch(options.endpoint, {
           method: options.method,
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            ...suppliedBody,
-            operationId,
-            expectedDraftSha: version.draftSha,
-            expectedMainSha: version.mainSha,
+            ...coordinatedBody,
+            requestHash,
           }),
         });
-        const result = await parseMutationResponse<T & { operation?: HostedOperationReceipt }>(
+        const rawResult = await parseMutationResponse<T & { operation?: HostedOperationReceipt }>(
           response,
         );
-        if (!result.operation)
-          throw new Error('Studio response did not include an operation receipt');
+        const operation = rawResult.operation;
+        if (!operation) throw new Error('Studio response did not include an operation receipt');
+        if (
+          operation.operationId !== operationId ||
+          operation.requestHash !== requestHash ||
+          operation.baseDraftSha !== version.draftSha ||
+          operation.baseMainSha !== version.mainSha
+        ) {
+          throw new Error('Studio response did not match the coordinated request');
+        }
+        if (options.protocolKind) {
+          const exact = parseHostedOperationReceipt(operation, {
+            operationId,
+            requestHash,
+            expectedDraftSha: version.draftSha,
+            expectedMainSha: version.mainSha,
+          });
+          if (exact.kind !== options.protocolKind) {
+            throw new Error('Studio response used the wrong authoring operation kind');
+          }
+        }
+        const result = { ...rawResult, operation };
         performance.mark('studio-operation-published');
         const pending: OperationState = {
           phase: 'waiting',

@@ -12,7 +12,9 @@ import {
   stablePageIdFromLabel,
   validateStablePageId,
 } from '../app/lib/page-identity.ts';
+import { resolveExistingContentEntry } from '../files/content-entry.ts';
 import { sourcePageOccurrencesOrThrow } from './page-identities.ts';
+import { analyzePageSource, ensurePageFactoryBindingInSource } from './page-source-analysis.ts';
 
 export const SLIDE_ID_RE = /^[a-z0-9_-]+$/i;
 
@@ -124,11 +126,8 @@ export async function duplicateSlideDir(
     return { ok: false, status: 400, error: 'invalid slideId' };
   }
 
-  try {
-    await fs.access(path.join(srcDir, 'index.tsx'));
-  } catch {
-    return { ok: false, status: 404, error: 'slide not found' };
-  }
+  const srcEntry = resolveExistingContentEntry(srcDir);
+  if (!srcEntry) return { ok: false, status: 404, error: 'slide not found' };
 
   let newId: string;
   if (desiredId !== undefined) {
@@ -160,7 +159,6 @@ export async function duplicateSlideDir(
     return { ok: false, status: 400, error: 'invalid newId' };
   }
 
-  const srcEntry = path.join(srcDir, 'index.tsx');
   let copiedEntrySource: string;
   try {
     const source = await fs.readFile(srcEntry, 'utf8');
@@ -180,7 +178,7 @@ export async function duplicateSlideDir(
 
   try {
     await fs.cp(srcDir, dstDir, { recursive: true, errorOnExist: true, force: false });
-    await fs.writeFile(path.join(dstDir, 'index.tsx'), copiedEntrySource, 'utf8');
+    await fs.writeFile(path.join(dstDir, path.basename(srcEntry)), copiedEntrySource, 'utf8');
     return { ok: true, slideId: newId };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -194,9 +192,7 @@ export function resolveSlideEntry(slidesRoot: string, slideId: string): string |
   if (!SLIDE_ID_RE.test(slideId)) return null;
   const dir = path.resolve(slidesRoot, slideId);
   if (!dir.startsWith(slidesRoot + path.sep)) return null;
-  // The SlideMeta contract says every slide has slides/<id>/index.tsx; we only
-  // edit that file to keep the write surface tiny and predictable.
-  return path.join(dir, 'index.tsx');
+  return resolveExistingContentEntry(dir) ?? path.join(dir, 'index.tsx');
 }
 
 function escapeSingleQuoted(s: string): string {
@@ -268,38 +264,33 @@ export function updateMetaTitleInSource(source: string, title: string): string |
 
 type ArrayElementRange = { start: number; end: number };
 
+function detachLineComment(segment: string): { segment: string; comment: string | null } {
+  const newline = segment.lastIndexOf('\n');
+  const lineEnd = newline >= 0 ? newline : segment.length;
+  const commentStart = segment.lastIndexOf('//', lineEnd);
+  if (commentStart < 0) return { segment, comment: null };
+  const before = segment.slice(0, commentStart).replace(/[ \t]+$/, '');
+  const comment = segment.slice(commentStart, lineEnd).trimEnd();
+  return { segment: before + segment.slice(lineEnd), comment };
+}
+
+function attachLineComment(segment: string, comment: string | null): string {
+  if (!comment) return segment;
+  const newline = segment.indexOf('\n');
+  const lineEnd = newline >= 0 ? newline : segment.length;
+  return `${segment.slice(0, lineEnd).replace(/[ \t]+$/, '')} ${comment}${segment.slice(lineEnd)}`;
+}
+
 function findDefaultExportArray(
   source: string,
 ): { elements: ArrayElementRange[]; arrayStart: number; arrayEnd: number } | null {
-  let ast: unknown;
-  try {
-    ast = babelParse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      errorRecovery: true,
-    });
-  } catch {
-    return null;
-  }
-  const body = (ast as { program?: { body?: Array<Record<string, unknown>> } }).program?.body ?? [];
-  for (const node of body) {
-    if (node.type !== 'ExportDefaultDeclaration') continue;
-    let inner = node.declaration as Record<string, unknown> | undefined;
-    while (inner && (inner.type === 'TSAsExpression' || inner.type === 'TSSatisfiesExpression')) {
-      inner = inner.expression as Record<string, unknown> | undefined;
-    }
-    if (inner?.type !== 'ArrayExpression') return null;
-    const arrayStart = inner.start as number;
-    const arrayEnd = inner.end as number;
-    const rawElements = (inner.elements as Array<Record<string, unknown> | null>) ?? [];
-    const elements: ArrayElementRange[] = [];
-    for (const el of rawElements) {
-      if (!el || typeof el.start !== 'number' || typeof el.end !== 'number') return null;
-      elements.push({ start: el.start as number, end: el.end as number });
-    }
-    return { elements, arrayStart, arrayEnd };
-  }
-  return null;
+  const analysis = analyzePageSource(source);
+  if (!analysis.ok) return null;
+  return {
+    elements: analysis.value.elements.map(({ start, end }) => ({ start, end })),
+    arrayStart: analysis.value.arrayStart,
+    arrayEnd: analysis.value.arrayEnd,
+  };
 }
 
 /**
@@ -339,18 +330,23 @@ export function reorderDefaultExportPagesInSource(source: string, order: number[
   if (identity) return source;
 
   const prefix = source.slice(arrayStart, elements[0].start);
-  const suffix = source.slice(elements[n - 1].end, arrayEnd);
+  const rawSuffix = source.slice(elements[n - 1].end, arrayEnd);
   const separators: string[] = [];
+  const comments: Array<string | null> = [];
   for (let i = 0; i < n - 1; i++) {
-    separators.push(source.slice(elements[i].end, elements[i + 1].start));
+    const detached = detachLineComment(source.slice(elements[i].end, elements[i + 1].start));
+    separators.push(detached.segment);
+    comments.push(detached.comment);
   }
+  const detachedSuffix = detachLineComment(rawSuffix);
+  comments.push(detachedSuffix.comment);
   const elementText = elements.map((el) => source.slice(el.start, el.end));
 
   let rebuilt = prefix + elementText[order[0]];
   for (let i = 1; i < n; i++) {
-    rebuilt += separators[i - 1] + elementText[order[i]];
+    rebuilt += attachLineComment(separators[i - 1], comments[order[i - 1]]) + elementText[order[i]];
   }
-  rebuilt += suffix;
+  rebuilt += attachLineComment(detachedSuffix.segment, comments[order[n - 1]]);
 
   return source.slice(0, arrayStart) + rebuilt + source.slice(arrayEnd);
 }
@@ -584,7 +580,17 @@ export function insertPageComponentInSource(
       return null;
     }
   }
-  const pageExpression = authoredId ? `page('${authoredId}', ${componentName})` : componentName;
+  let workingSource = source;
+  let pageReference: string | null = null;
+  if (authoredId) {
+    const bound = ensurePageFactoryBindingInSource(workingSource);
+    if (!bound) return null;
+    workingSource = bound.source;
+    pageReference = bound.reference;
+  }
+  const pageExpression = authoredId
+    ? `${pageReference}('${authoredId}', ${componentName})`
+    : componentName;
 
   let templateAst: unknown;
   try {
@@ -606,20 +612,20 @@ export function insertPageComponentInSource(
     return null;
   }
 
-  const found = findDefaultExportArray(source);
+  const found = findDefaultExportArray(workingSource);
   if (!found || index > found.elements.length) return null;
   const { elements, arrayStart, arrayEnd } = found;
   let next: string;
   if (elements.length === 0) {
-    next = `${source.slice(0, arrayStart)}[${pageExpression}]${source.slice(arrayEnd)}`;
+    next = `${workingSource.slice(0, arrayStart)}[${pageExpression}]${workingSource.slice(arrayEnd)}`;
   } else {
-    const prefix = source.slice(arrayStart, elements[0].start);
-    const suffix = source.slice(elements[elements.length - 1].end, arrayEnd);
+    const prefix = workingSource.slice(arrayStart, elements[0].start);
+    const suffix = workingSource.slice(elements[elements.length - 1].end, arrayEnd);
     const separators: string[] = [];
     for (let i = 0; i < elements.length - 1; i++) {
-      separators.push(source.slice(elements[i].end, elements[i + 1].start));
+      separators.push(workingSource.slice(elements[i].end, elements[i + 1].start));
     }
-    const values = elements.map((element) => source.slice(element.start, element.end));
+    const values = elements.map((element) => workingSource.slice(element.start, element.end));
     values.splice(index, 0, pageExpression);
     const separator = chooseInsertSeparator(prefix, separators);
     const nextSeparators = separators.slice();
@@ -629,7 +635,7 @@ export function insertPageComponentInSource(
       rebuilt += (nextSeparators[i - 1] ?? separator) + values[i];
     }
     rebuilt += suffix;
-    next = source.slice(0, arrayStart) + rebuilt + source.slice(arrayEnd);
+    next = workingSource.slice(0, arrayStart) + rebuilt + workingSource.slice(arrayEnd);
   }
 
   const insertionPoint = next.search(/export\s+const\s+meta\b|export\s+default\b/);
@@ -645,7 +651,7 @@ export function insertPageComponentInSource(
   } catch {
     return null;
   }
-  return authoredId ? ensurePageValueImportInSource(withComponent) : withComponent;
+  return withComponent;
 }
 
 /**
@@ -704,78 +710,24 @@ function duplicatePageElement(
   return source.slice(0, arrayStart) + rebuilt + source.slice(arrayEnd);
 }
 
-function ensurePageValueImportInSource(source: string): string | null {
-  let ast: unknown;
-  try {
-    ast = babelParse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      errorRecovery: false,
-    });
-  } catch {
-    return null;
-  }
-  const body = (ast as { program?: { body?: Array<Record<string, unknown>> } }).program?.body ?? [];
-  let lastImportEnd = -1;
-  for (const statement of body) {
-    if (statement.type === 'ImportDeclaration') {
-      if (typeof statement.end === 'number') lastImportEnd = statement.end;
-      const sourceValue = (statement.source as Record<string, unknown> | undefined)?.value;
-      const declarationKind = statement.importKind;
-      const specifiers = (statement.specifiers as Array<Record<string, unknown>> | undefined) ?? [];
-      for (const specifier of specifiers) {
-        const localName = (specifier.local as Record<string, unknown> | undefined)?.name;
-        if (localName !== 'page') continue;
-        const importedName = (specifier.imported as Record<string, unknown> | undefined)?.name;
-        if (
-          sourceValue === '@open-slide/core' &&
-          specifier.type === 'ImportSpecifier' &&
-          importedName === 'page' &&
-          declarationKind !== 'type' &&
-          specifier.importKind !== 'type'
-        ) {
-          return source;
-        }
-        return null;
-      }
-      continue;
-    }
-
-    if (
-      (statement.type === 'FunctionDeclaration' || statement.type === 'ClassDeclaration') &&
-      (statement.id as Record<string, unknown> | undefined)?.name === 'page'
-    ) {
-      return null;
-    }
-    if (statement.type === 'VariableDeclaration') {
-      const declarations =
-        (statement.declarations as Array<Record<string, unknown>> | undefined) ?? [];
-      if (
-        declarations.some(
-          (declaration) =>
-            (declaration.id as Record<string, unknown> | undefined)?.type === 'Identifier' &&
-            (declaration.id as Record<string, unknown> | undefined)?.name === 'page',
-        )
-      ) {
-        return null;
-      }
-    }
-  }
-
-  const importStatement = "import { page } from '@open-slide/core';";
-  if (lastImportEnd >= 0) {
-    return `${source.slice(0, lastImportEnd)}\n${importStatement}${source.slice(lastImportEnd)}`;
-  }
-  return `${importStatement}\n${source}`;
-}
-
 export function migrateLegacyPageOccurrencesInSource(source: string, sourceModule: string): string {
-  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
-  const legacy = occurrences.filter((occurrence) => !occurrence.authored);
+  const initialOccurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
+  const legacy = initialOccurrences.filter((occurrence) => !occurrence.authored);
   if (legacy.length === 0) return source;
 
+  const bound = ensurePageFactoryBindingInSource(source);
+  if (!bound) {
+    throw new PageIdentityUnavailableError(
+      sourceModule,
+      'A safe page factory binding is unavailable.',
+    );
+  }
+  const workingSource = bound.source;
+  const occurrences = sourcePageOccurrencesOrThrow(workingSource, sourceModule);
+  const workingLegacy = occurrences.filter((occurrence) => !occurrence.authored);
+
   const occupied = new Set(occurrences.map((occurrence) => occurrence.id));
-  const replacements = legacy.map((occurrence) => {
+  const replacements = workingLegacy.map((occurrence) => {
     const base = stablePageIdFromLabel(occurrence.componentName ?? 'page');
     let stableId = base as string;
     let suffix = 2;
@@ -787,23 +739,16 @@ export function migrateLegacyPageOccurrencesInSource(source: string, sourceModul
     return {
       start: occurrence.start,
       end: occurrence.end,
-      text: `page('${validated}', ${source.slice(occurrence.start, occurrence.end)})`,
+      text: `${bound.reference}('${validated}', ${workingSource.slice(occurrence.start, occurrence.end)})`,
     };
   });
 
-  let migrated = source;
+  let migrated = workingSource;
   for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
     migrated =
       migrated.slice(0, replacement.start) + replacement.text + migrated.slice(replacement.end);
   }
-  const withImport = ensurePageValueImportInSource(migrated);
-  if (withImport === null) {
-    throw new PageIdentityUnavailableError(
-      sourceModule,
-      'The source already binds "page" to another value.',
-    );
-  }
-  return withImport;
+  return migrated;
 }
 
 export type PageReorderByIdResult = {
@@ -868,32 +813,42 @@ export function duplicatePageByIdInSource(
   pageId: string,
   sourceModule: string,
 ): PageDuplicationByIdResult {
-  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
-  const index = occurrences.findIndex((occurrence) => occurrence.id === pageId);
+  let workingSource = source;
+  let occurrences = sourcePageOccurrencesOrThrow(workingSource, sourceModule);
+  let index = occurrences.findIndex((occurrence) => occurrence.id === pageId);
   if (index < 0) throw new PageIdentityStaleError(pageId);
-  const selected = occurrences[index];
+  let selected = occurrences[index];
+  let pageReference: string | null = null;
+  if (!selected.authored) {
+    const bound = ensurePageFactoryBindingInSource(workingSource);
+    if (!bound) {
+      throw new PageIdentityUnavailableError(
+        sourceModule,
+        'A safe page factory binding is unavailable.',
+      );
+    }
+    workingSource = bound.source;
+    pageReference = bound.reference;
+    occurrences = sourcePageOccurrencesOrThrow(workingSource, sourceModule);
+    index = occurrences.findIndex((occurrence) => occurrence.id === pageId);
+    if (index < 0) throw new PageIdentityStaleError(pageId);
+    selected = occurrences[index];
+  }
   const nextIdentity = nextDuplicatePageId(
     selected.id,
     occurrences.map((occurrence) => occurrence.id),
   );
-  const found = findDefaultExportArray(source);
+  const found = findDefaultExportArray(workingSource);
   if (!found) {
     throw new PageIdentityUnavailableError(sourceModule, 'The page cannot be duplicated.');
   }
 
   let duplicateText: string;
   if (selected.authored && selected.stableIdStart !== null && selected.stableIdEnd !== null) {
-    duplicateText = `${source.slice(selected.start, selected.stableIdStart)}'${nextIdentity.stableId}'${source.slice(selected.stableIdEnd, selected.end)}`;
+    duplicateText = `${workingSource.slice(selected.start, selected.stableIdStart)}'${nextIdentity.stableId}'${workingSource.slice(selected.stableIdEnd, selected.end)}`;
   } else {
-    duplicateText = `page('${nextIdentity.stableId}', ${source.slice(selected.start, selected.end)})`;
+    duplicateText = `${pageReference}('${nextIdentity.stableId}', ${workingSource.slice(selected.start, selected.end)})`;
   }
-  const duplicated = duplicatePageElement(source, found, index, duplicateText);
-  const withImport = selected.authored ? duplicated : ensurePageValueImportInSource(duplicated);
-  if (withImport === null) {
-    throw new PageIdentityUnavailableError(
-      sourceModule,
-      'The source already binds "page" to another value.',
-    );
-  }
-  return { source: withImport, sourceIndex: index, index: index + 1, pageId: nextIdentity.pageId };
+  const duplicated = duplicatePageElement(workingSource, found, index, duplicateText);
+  return { source: duplicated, sourceIndex: index, index: index + 1, pageId: nextIdentity.pageId };
 }

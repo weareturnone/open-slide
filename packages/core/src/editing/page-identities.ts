@@ -1,4 +1,4 @@
-import { parse as babelParse } from '@babel/parser';
+import type * as t from '@babel/types';
 import {
   authoredPageId,
   legacyPageId,
@@ -12,6 +12,12 @@ import {
   type StablePageId,
   validateStablePageId,
 } from '../app/lib/page-identity.ts';
+import {
+  analyzePageSource,
+  isPageFactoryCall,
+  type PageSourceAnalysis,
+  unwrapPageExpression,
+} from './page-source-analysis.ts';
 
 export type SourcePageOccurrence = {
   readonly id: PageId | null;
@@ -30,94 +36,56 @@ export type SourcePageIdentityResolution = {
   readonly error: PageIdentityError | null;
 };
 
-type AstNode = Record<string, unknown>;
-
-function unwrapExpression(node: AstNode | undefined): AstNode | undefined {
-  let current = node;
-  while (
-    current &&
-    (current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TypeCastExpression' ||
-      current.type === 'ParenthesizedExpression')
-  ) {
-    current = current.expression as AstNode | undefined;
-  }
-  return current;
-}
-
-function parseDefaultExportElements(source: string): AstNode[] | null {
-  let ast: unknown;
-  try {
-    ast = babelParse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      errorRecovery: false,
-    });
-  } catch {
-    return null;
-  }
-  const body = (ast as { program?: { body?: AstNode[] } }).program?.body ?? [];
-  for (const node of body) {
-    if (node.type !== 'ExportDefaultDeclaration') continue;
-    const declaration = unwrapExpression(node.declaration as AstNode | undefined);
-    if (declaration?.type !== 'ArrayExpression') return null;
-    const elements = (declaration.elements as Array<AstNode | null> | undefined) ?? [];
-    if (elements.some((element) => !element || element.type === 'SpreadElement')) return null;
-    return elements as AstNode[];
-  }
-  return null;
-}
-
 function sourceOccurrence(
   source: string,
-  node: AstNode,
+  node: t.Expression,
   sourceModule: SourceModuleId,
+  analysis: PageSourceAnalysis,
 ): SourcePageOccurrence | PageIdentityError {
-  const expression = unwrapExpression(node) ?? node;
+  const expression = unwrapPageExpression(node) ?? node;
   const start = expression.start;
   const end = expression.end;
   if (typeof start !== 'number' || typeof end !== 'number') {
     return new PageIdentityUnavailableError(sourceModule, 'A page source range is unavailable.');
   }
 
-  if (expression.type === 'CallExpression') {
-    const callee = expression.callee as AstNode | undefined;
-    const args = (expression.arguments as AstNode[] | undefined) ?? [];
-    if (callee?.type === 'Identifier' && callee.name === 'page') {
-      const idArg = args[0];
-      const componentArg = unwrapExpression(args[1]);
-      if (
-        args.length !== 2 ||
-        !idArg ||
-        idArg.type !== 'StringLiteral' ||
-        typeof idArg.value !== 'string' ||
-        !componentArg
-      ) {
-        return new PageIdentityValidationError(source.slice(start, end));
-      }
-      let stableId: StablePageId;
-      try {
-        stableId = validateStablePageId(idArg.value);
-      } catch (error) {
-        return error instanceof PageIdentityError
-          ? error
-          : new PageIdentityValidationError(String(idArg.value));
-      }
-      return {
-        id: authoredPageId(sourceModule, stableId),
-        authored: true,
-        stableId,
-        componentName:
-          componentArg.type === 'Identifier' && typeof componentArg.name === 'string'
-            ? componentArg.name
-            : null,
-        start,
-        end,
-        stableIdStart: typeof idArg.start === 'number' ? idArg.start : null,
-        stableIdEnd: typeof idArg.end === 'number' ? idArg.end : null,
-      };
+  if (isPageFactoryCall(expression, analysis)) {
+    const args = expression.arguments;
+    const idArg = unwrapPageExpression(args[0]);
+    const componentArg = unwrapPageExpression(args[1]);
+    if (
+      args.length !== 2 ||
+      args.some(
+        (argument) => argument.type === 'SpreadElement' || argument.type === 'ArgumentPlaceholder',
+      ) ||
+      !idArg ||
+      idArg.type !== 'StringLiteral' ||
+      typeof idArg.value !== 'string' ||
+      !componentArg
+    ) {
+      return new PageIdentityValidationError(source.slice(start, end));
     }
+    let stableId: StablePageId;
+    try {
+      stableId = validateStablePageId(idArg.value);
+    } catch (error) {
+      return error instanceof PageIdentityError
+        ? error
+        : new PageIdentityValidationError(String(idArg.value));
+    }
+    return {
+      id: authoredPageId(sourceModule, stableId),
+      authored: true,
+      stableId,
+      componentName:
+        componentArg.type === 'Identifier' && typeof componentArg.name === 'string'
+          ? componentArg.name
+          : null,
+      start,
+      end,
+      stableIdStart: typeof idArg.start === 'number' ? idArg.start : null,
+      stableIdEnd: typeof idArg.end === 'number' ? idArg.end : null,
+    };
   }
 
   if (expression.type === 'Identifier' && typeof expression.name === 'string') {
@@ -157,32 +125,28 @@ export function resolvePageIdentitiesInSource(
     };
   }
 
-  const elements = parseDefaultExportElements(source);
-  if (!elements) {
+  const analyzed = analyzePageSource(source);
+  if (!analyzed.ok) {
     return {
       sourceModule,
       occurrences: [],
-      error: new PageIdentityUnavailableError(
-        sourceModule,
-        'The default export must be a page array.',
-      ),
+      error: new PageIdentityUnavailableError(sourceModule, analyzed.reason),
     };
   }
 
   const occurrences: SourcePageOccurrence[] = [];
   let firstError: PageIdentityError | null = null;
-  for (const element of elements) {
-    const occurrence = sourceOccurrence(source, element, sourceModule);
+  for (const element of analyzed.value.elements) {
+    const occurrence = sourceOccurrence(source, element.node, sourceModule, analyzed.value);
     if (occurrence instanceof PageIdentityError) {
       firstError ??= occurrence;
-      const expression = unwrapExpression(element) ?? element;
       occurrences.push({
         id: null,
         authored: false,
         stableId: null,
         componentName: null,
-        start: typeof expression.start === 'number' ? expression.start : 0,
-        end: typeof expression.end === 'number' ? expression.end : 0,
+        start: element.start,
+        end: element.end,
         stableIdStart: null,
         stableIdEnd: null,
       });

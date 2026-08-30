@@ -25,6 +25,23 @@ async function writeSlide(root: string, id: string): Promise<string> {
 }
 
 describe('generateSlidesModule', () => {
+  it('canonicalizes conflicting entry extensions to one identity and source module', async () => {
+    await withSlidesRoot(async (root) => {
+      const deckDir = path.join(root, 'deck');
+      await fs.mkdir(deckDir, { recursive: true });
+      const jsEntry = path.join(deckDir, 'index.js');
+      const jsxEntry = path.join(deckDir, 'index.jsx');
+      await fs.writeFile(jsEntry, 'export default [];\n', 'utf8');
+      await fs.writeFile(jsxEntry, 'export default [];\n', 'utf8');
+
+      const { code } = await generateSlidesModule([jsEntry, jsxEntry], root, false);
+
+      expect(code).toContain('export const slideIds = ["deck"];');
+      expect(code).toContain('"deck":"slides/deck/index.jsx"');
+      expect(code).not.toContain('slides/deck/index.js"');
+    });
+  });
+
   it('keeps slides whose id is ASCII-safe and reports none ignored', async () => {
     await withSlidesRoot(async (root) => {
       const files = [await writeSlide(root, 'cover'), await writeSlide(root, 'intro_2')].sort();

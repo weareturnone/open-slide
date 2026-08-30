@@ -2,6 +2,7 @@ import path from 'node:path';
 import * as t from '@babel/types';
 import type { Plugin } from 'vite';
 import { tryParse, walkAll, walkJsx } from '../editing/babel-walk.ts';
+import { analyzePageSource } from '../editing/page-source-analysis.ts';
 import { targetFingerprint } from '../editing/target-fingerprint.ts';
 
 // Inject `data-slide-loc="<line>:<col>"` onto every host JSX element in
@@ -192,34 +193,13 @@ function isComponentJsxName(name: t.JSXOpeningElement['name']): boolean {
   return t.isJSXMemberExpression(name) || (t.isJSXIdentifier(name) && /^[A-Z]/.test(name.name));
 }
 
-function unwrapPageExpression(
-  expression: t.Expression | t.Declaration,
-): t.Expression | t.Declaration {
-  let current = expression;
-  while (
-    t.isTSAsExpression(current) ||
-    t.isTSSatisfiesExpression(current) ||
-    t.isTypeCastExpression(current) ||
-    t.isParenthesizedExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
-function legacyPageNameRegistration(ast: t.File, sourceModule: string): string {
-  if (!sourceModule.endsWith('/index.tsx')) return '';
+function legacyPageNameRegistration(source: string, sourceModule: string): string {
+  if (!/\/index\.(?:tsx|jsx|ts|js)$/.test(sourceModule)) return '';
+  const analyzed = analyzePageSource(source);
+  if (!analyzed.ok) return '';
   const names = new Set<string>();
-  for (const statement of ast.program.body) {
-    if (!t.isExportDefaultDeclaration(statement)) continue;
-    const declaration = unwrapPageExpression(statement.declaration);
-    if (!t.isArrayExpression(declaration)) return '';
-    for (const element of declaration.elements) {
-      if (!element || t.isSpreadElement(element) || t.isJSXNamespacedName(element)) continue;
-      const expression = unwrapPageExpression(element);
-      if (t.isIdentifier(expression)) names.add(expression.name);
-    }
-    break;
+  for (const element of analyzed.value.elements) {
+    if (t.isIdentifier(element.node)) names.add(element.node.name);
   }
   if (names.size === 0) return '';
 
@@ -264,7 +244,7 @@ export function injectLocTags(code: string, sourceModule?: string): string | nul
     });
   });
 
-  const legacyRegistration = sourceModule ? legacyPageNameRegistration(ast, sourceModule) : '';
+  const legacyRegistration = sourceModule ? legacyPageNameRegistration(code, sourceModule) : '';
   if (insertions.length === 0 && legacyRegistration.length === 0) return null;
   insertions.sort((a, b) => b.offset - a.offset);
   let next = code;
@@ -291,8 +271,8 @@ function sourceModuleForFile(
 ): string | null {
   const filePath = id.split(/[?#]/)[0].replace(/\\/g, '/');
   if (!filePath.startsWith(`${contentRootPosix}/`)) return null;
-  if (!filePath.endsWith('.tsx')) return null;
-  if (filePath.endsWith('.d.ts') || filePath.endsWith('.test.tsx')) return null;
+  if (!/\.(?:tsx|jsx|ts|js)$/.test(filePath)) return null;
+  if (/\.d\.ts$|\.(?:test|spec)\.(?:tsx|jsx|ts|js)$/.test(filePath)) return null;
   const rel = filePath.slice(contentRootPosix.length + 1);
   if (!rel.includes('/')) return null;
   return `${namespace}/${rel}`;

@@ -90,55 +90,152 @@ database or a second publication path.
 
 ## Writer API contract
 
-The Vite-local writer uses page identity as the only source-selection authority. A hosted Studio
-writer must implement the same contract before an identity-aware client is deployed against it.
-Navigation indices may remain in URLs for old clients, but a writer must ignore them when choosing
-an authored occurrence.
+The writer uses page identity as its only source-selection authority. A number in a URL or navigation
+state can choose what the viewer displays, but it cannot choose an expression to mutate.
 
-| Operation | Request body | Local success response |
+### Source grammar and entry path
+
+One parser is authoritative for identity resolution, reorder, duplicate, delete, catalog insertion,
+legacy registration, and migration. It accepts either form below:
+
+```tsx
+export default [page('cover', Cover), Closing] satisfies Page[];
+
+const pages: Page[] = ([page('cover', Cover), Closing] satisfies Page[]);
+export default pages;
+```
+
+The named form must use one unambiguous top-level `const` initialized directly with an array. The
+binding cannot be imported, shadowed, reassigned, or mutated. Holes and spread elements are rejected.
+Parentheses, `as`, and `satisfies` wrappers do not change the rule.
+
+An authored call must resolve to a value import from `@open-slide/core`. These imports are valid:
+
+```tsx
+import { page } from '@open-slide/core';
+import { page as definePage } from '@open-slide/core';
+import * as OpenSlide from '@open-slide/core';
+```
+
+The corresponding calls are `page(...)`, `definePage(...)`, and `OpenSlide.page(...)`. Type-only
+imports, local spelling matches, computed members, and imports from another package are not page
+factories. Generated writes reuse an existing alias or namespace. If none exists, the writer adds a
+collision-free value import.
+
+Entry discovery and mutation share the extension order `.tsx`, `.jsx`, `.ts`, `.js`. The chosen
+entry's actual relative path is its `sourceModule`; the writer never rewrites an `index.jsx` page ID
+as `index.tsx`. Source modules are slash-normalized repository-relative paths. Absolute Unix paths,
+Windows drive paths, traversal, `./`, empty segments, query strings, and fragments are invalid.
+
+### Local endpoints
+
+| Operation | Request body | Success response |
 | --- | --- | --- |
-| Reorder, `PUT /__slides/:id/reorder` | `{ "pageIds": PageId[], "focusPageId": PageId }` | `200 { "ok": true, "slideId": string, "pageIds": PageId[] }` |
-| Duplicate page, `POST /__slides/:id/pages/duplicate` | `{ "pageId": PageId }` | `200 { "ok": true, "slideId": string, "index": number, "pageId": PageId }`, where `pageId` is the persisted copy ID |
-| Delete page, `DELETE /__slides/:id/pages` | `{ "pageId": PageId }` | `200 { "ok": true, "slideId": string, "index": number, "pageId": PageId }`, where `pageId` is the deleted occurrence ID |
-| Single inspector edit, `POST /__edit` | `{ "slideId": string, "kind": ContentKind, "pageId": PageId, "line": number, "column": number, "ops": EditOp[], "strict": true }` | `200 { "ok": true, "changed": boolean }` |
-| Batch inspector edit, `POST /__edit/batch` | `{ "slideId": string, "kind": ContentKind, "pageId": PageId, "edits": Edit[] }` | `200 { "ok": true, "changed": boolean, "results": [{ "ok": true }, ...] }` |
-| Catalog insertion, `POST /__catalog` | `{ "slideId": string, "kind": ContentKind, "templateId": string, "beforePageId": PageId \| null, "afterPageId": PageId \| null }` | `200 { "ok": true, "componentName": string, "index": number, "pageId": PageId, "kind": ContentKind }` |
+| `slide.reorder`, `PUT /__slides/:id/reorder` | `{ "pageIds": PageId[], "focusPageId"?: PageId }` | `200 { "ok": true, "slideId": string, "pageIds": PageId[] }` |
+| `page.duplicate`, `POST /__slides/:id/pages/duplicate` | `{ "pageId": PageId }` | `200 { "ok": true, "slideId": string, "index": number, "pageId": PageId }`; `pageId` is the persisted copy |
+| `page.delete`, `DELETE /__slides/:id/pages` | `{ "pageId": PageId }` | `200 { "ok": true, "slideId": string, "index": number, "pageId": PageId }`; `pageId` is the deleted occurrence |
+| `catalog.insert`, `POST /__catalog` | `{ "slideId": string, "kind": ContentKind, "templateId": string, "beforePageId"?: PageId, "afterPageId"?: PageId }` | `200 { "ok": true, "componentName": string, "index": number, "pageId": PageId, "kind": ContentKind }` |
+| `inspector.batch-edit`, `POST /__edit/batch` | `{ "slideId": string, "kind": ContentKind, "pageId": PageId, "edits": Edit[] }` | `200 { "ok": true, "changed": boolean, "results": [{ "ok": true }, ...] }` |
 
-Document requests use `?kind=document` on slide routes. `focusPageId` preserves the logical focused
-page for hosted coordination; it is not allowed to select the source expression. In production,
-the hosted-operation wrapper adds `operationId`, `expectedDraftSha`, and `expectedMainSha` to every
-structural request body. A hosted success response contains the operation-specific fields above plus
-an `operation` receipt with `operationId`, `kind`, `artifactId`, `baseMainSha`, `draftCommitSha`,
-`targetMainSha`, `requestHash`, `proof`, and receipt version. The existing status polling contract
-then verifies and deploys that receipt.
+The inspector uses the batch endpoint for one edit as well as many. Local Vite clients omit hosted
+coordination fields. Document slide routes add `?kind=document`.
 
-For catalog insertion, the two neighbor IDs describe one boundary. At the beginning,
-`afterPageId` is absent and `beforePageId` is the first page. At the end, `afterPageId` is the last
-page and `beforePageId` is absent. For an empty deck both are absent. Between pages, both are present
-and must still be adjacent when the server reads the latest source. A missing or non-adjacent
-neighbor is stale and must not fall back to a numeric insertion index.
+Catalog neighbors identify one exact boundary. At the start, only `beforePageId` is present. At the
+end, only `afterPageId` is present. Both are absent for an empty array. Between pages, both are
+present and must still be adjacent when the locked transaction reads the file. A missing or
+non-adjacent neighbor is stale; the writer does not fall back to an index.
 
-The writer resolves every request against the latest source text. It accepts authored `page()`
-entries and unique named legacy entries. Reorder moves the original array expressions. Duplicate
-writes a new `page('...-copy', Component)` expression. Delete removes only the selected expression.
-Catalog insertion writes a new authored occurrence. Existing plain arrays continue to render, and a
-unique legacy occurrence remains writable through its `#legacy:ComponentName` ID. Duplicate legacy
-occurrences render but all identity-dependent writes fail closed.
+Every source mutation runs as one per-file transaction: canonical-path lock, read, identity
+resolution, transformation, same-directory exclusive temporary write, file sync, mode-preserving
+atomic rename, and directory sync where supported. A failed transform leaves the original file
+untouched. Cleanup removes only the temporary file that the transaction created exclusively.
 
-Identity failures use a stable JSON shape: `{ "error": string, "name": string, "code": string }`.
-The codes are `PAGE_IDENTITY_VALIDATION`, `PAGE_IDENTITY_COLLISION`, `PAGE_IDENTITY_STALE`, and
-`PAGE_IDENTITY_UNAVAILABLE`. Validation errors use HTTP 400. Collisions and stale identities use
-HTTP 409. Unavailable identity uses HTTP 422. Missing content remains 404, unsafe or unsupported
-source transformations remain 422, and successful no-op writes remain 200. Hosted coordination
-errors retain the existing `{ "ok": false, "code": string, "message": string,
-"allowedActions": string[] }` shape.
+### Hosted request envelope
 
-Old numeric reorder bodies and page-index-only writes must not silently mutate source. The local
-writer may accept the old `/pages/:index` URL only when a valid `pageId` body is also present, and it
-ignores the numeric segment. During a staged hosted rollout an old request may receive an explicit
-compatibility error, or an adapter may first resolve the current page ID and then call the
-identity-aware writer. A hosted writer must parse both `page('id', Component)` and unique plain
-component entries before enabling the new client contract.
+Production adds all four fields below to every structural or inspector request:
 
-The Studio hosted writer is outside this package. It must gain this parser and contract in a
-separate companion change before the full Studio program can be called ready.
+```ts
+type AuthoringCoordination = {
+  operationId: string;       // UUID
+  requestHash: string;       // `sha256:` plus 64 lowercase hex characters
+  expectedDraftSha: string;  // 40- or 64-character Git object ID
+  expectedMainSha: string;   // 40- or 64-character Git object ID
+};
+```
+
+`requestHash` is SHA-256 over canonical JSON containing the uppercase HTTP method, normalized path
+and sorted query string, and request body. Object keys are sorted recursively. Array order is kept.
+`operationId` and `requestHash` are omitted from the hashed body; expected heads remain in it. This
+makes a retry of the same logical request hash identically even when transport code rebuilds the
+object in another key order.
+
+The operation store applies these rules before reading or writing repository content:
+
+| Existing `operationId` | Hash relation | Decision |
+| --- | --- | --- |
+| None | n/a | Reserve as pending and execute |
+| Complete | Same | Return the stored receipt without another mutation |
+| Pending | Same | Return `409 OPERATION_IN_PROGRESS`; the client polls status |
+| Any state | Different | Return `409 OPERATION_ID_REUSED`; never execute |
+
+Reservation is not concurrency control for Git. The writer reads both refs and requires exact
+matches with `expectedDraftSha` and `expectedMainSha` before it reads source. It builds the draft
+commit with `expectedDraftSha` as parent. Immediately before updating the draft ref, it reads both
+refs again and aborts with `STALE_STUDIO_HEADS` if either changed. The draft ref update is a
+compare-and-swap whose expected old value is `expectedDraftSha`. Publishing performs the same check
+on main and updates main only while its old value is `expectedMainSha`. A main conflict after the
+draft CAS leaves the durable draft commit available for status and recovery, but it cannot produce a
+ready receipt or claim that the change reached main.
+
+### Receipt and proof
+
+A completed hosted mutation returns its operation-specific result plus this exact receipt:
+
+```ts
+type HostedOperationReceipt = {
+  version: 1;
+  operationId: string;
+  requestHash: string;
+  kind: 'slide.reorder' | 'page.duplicate' | 'page.delete' |
+    'catalog.insert' | 'inspector.batch-edit';
+  artifactId: string;
+  baseDraftSha: string;
+  baseMainSha: string;
+  draftCommitSha: string;
+  targetMainSha: string;
+  proof: AuthoringOperationProof;
+  createdAt: string; // ISO 8601
+};
+```
+
+Every proof has `version: 1`, `kind`, the exact `sourceModule`, final `pageIds`, `focusPageId`, and
+`resolvedPageIndex`. The operation-specific fields are:
+
+| Kind | Required proof fields |
+| --- | --- |
+| `slide.reorder` | `orderedPageIds` |
+| `page.duplicate` | `sourcePageId`, `createdPageId` |
+| `page.delete` | `deletedPageId` |
+| `catalog.insert` | `templateId`, `createdPageId` |
+| `inspector.batch-edit` | `editedPageId`, `editCount` |
+
+The client rejects a receipt whose operation ID, request hash, base heads, kind, proof, source path,
+or page IDs do not match the request contract. Status polling can use `focusPageId` and
+`resolvedPageIndex` for navigation, but those fields never select source during the write.
+
+### Errors and compatibility
+
+Local identity failures use `{ "error": string, "name": string, "code": string }`.
+`PAGE_IDENTITY_VALIDATION` is HTTP 400. `PAGE_IDENTITY_COLLISION` and `PAGE_IDENTITY_STALE` are
+HTTP 409. `PAGE_IDENTITY_UNAVAILABLE` is HTTP 422. Missing content is HTTP 404, including a missing
+catalog target. Unsupported source shapes are HTTP 422. A safe no-op remains HTTP 200.
+
+Hosted failures use `{ "ok": false, "code": string, "message": string, "allowedActions": string[] }`.
+The status mapping is fixed: invalid request 400, read-only 403, missing content 404, stale heads,
+operation reuse, in-progress operation, or stale page identity 409, unsupported source shape 422,
+and internal failure 500.
+
+Old page-index-only writes do not mutate source. The legacy `/pages/:index` URL is tolerated only
+when the body contains a valid `pageId`; the numeric segment is ignored. Plain arrays with unique
+named components remain writable through `#legacy:ComponentName`. Repeated legacy occurrences still
+render, but every identity-dependent write fails closed until the occurrences receive authored IDs.

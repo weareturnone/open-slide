@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import type { ViteDevServer } from 'vite';
 import { isPageIdentityError } from '../../app/lib/page-identity.ts';
@@ -16,15 +15,9 @@ import {
   validateSlideName,
 } from '../../editing/slide-ops.ts';
 import { readManifest, writeManifest } from '../../files/folders.ts';
+import { transactSourceFile } from '../../files/source-transactions.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
-import {
-  type ApiContext,
-  contentRoot,
-  contentSourceModule,
-  json,
-  readBody,
-  resolveContentEntryPath,
-} from './context.ts';
+import { type ApiContext, contentRoot, json, readBody, resolveContentEntry } from './context.ts';
 
 // PUT    /__slides/:id/reorder            reorder pages { pageIds: string[] }
 // DELETE /__slides/:id/pages              remove page { pageId }
@@ -75,34 +68,40 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           return json(res, 400, { error: 'invalid pageIds' });
         }
 
-        const entry = resolveContentEntryPath(ctx, slideId, kind);
+        const entry = resolveContentEntry(ctx, slideId, kind);
         if (!entry) return json(res, 400, { error: 'invalid slideId' });
 
-        let source: string;
+        let transaction: { value: { ok: true } | { ok: false; error: string } };
         try {
-          source = await fs.readFile(entry, 'utf8');
-        } catch {
-          return json(res, 404, { error: 'slide not found' });
-        }
-
-        let reordered: ReturnType<typeof reorderDefaultExportPagesByIdInSource>;
-        try {
-          reordered = reorderDefaultExportPagesByIdInSource(
-            source,
-            body.pageIds as string[],
-            contentSourceModule(slideId, kind),
+          transaction = await transactSourceFile<{ ok: true } | { ok: false; error: string }>(
+            entry.filePath,
+            (source) => {
+              const reordered = reorderDefaultExportPagesByIdInSource(
+                source,
+                body.pageIds as string[],
+                entry.sourceModule,
+              );
+              const withNotes = reorderNotesArrayInSource(reordered.source, reordered.order);
+              if (withNotes === null) {
+                return {
+                  source,
+                  value: {
+                    ok: false,
+                    error: 'could not reorder pages — `notes` export has an unexpected shape',
+                  } as const,
+                };
+              }
+              return { source: withNotes, value: { ok: true } as const };
+            },
           );
         } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
           return identityFailure(res, error);
         }
-        const withNotes = reorderNotesArrayInSource(reordered.source, reordered.order);
-        if (withNotes === null) {
-          return json(res, 422, {
-            error: 'could not reorder pages — `notes` export has an unexpected shape',
-          });
-        }
-        if (withNotes !== source) {
-          await fs.writeFile(entry, withNotes, 'utf8');
+        if (!transaction.value.ok) {
+          return json(res, 422, { error: transaction.value.error });
         }
         return json(res, 200, { ok: true, slideId, pageIds: body.pageIds });
       }
@@ -125,49 +124,62 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           return json(res, requestCheck.status, { error: requestCheck.error });
         }
 
-        const entry = resolveContentEntryPath(ctx, slideId, kind);
+        const entry = resolveContentEntry(ctx, slideId, kind);
         if (!entry) return json(res, 400, { error: 'invalid slideId' });
-
-        let source: string;
-        try {
-          source = await fs.readFile(entry, 'utf8');
-        } catch {
-          return json(res, 404, { error: 'slide not found' });
-        }
 
         const body = (await readBody(req)) as { pageId?: unknown };
         if (typeof body.pageId !== 'string') return json(res, 400, { error: 'invalid pageId' });
-        let updated:
-          | ReturnType<typeof removePageByIdInSource>
-          | ReturnType<typeof duplicatePageByIdInSource>;
+        type PageOperationValue =
+          | { ok: false; error: string }
+          | { ok: true; index: number; pageId: string };
+        let transaction: { value: PageOperationValue };
         try {
-          updated = isDelete
-            ? removePageByIdInSource(source, body.pageId, contentSourceModule(slideId, kind))
-            : duplicatePageByIdInSource(source, body.pageId, contentSourceModule(slideId, kind));
+          transaction = await transactSourceFile<PageOperationValue>(entry.filePath, (source) => {
+            const updated = isDelete
+              ? removePageByIdInSource(source, body.pageId as string, entry.sourceModule)
+              : duplicatePageByIdInSource(source, body.pageId as string, entry.sourceModule);
+            const noteIndex = isDelete
+              ? updated.index
+              : (updated as ReturnType<typeof duplicatePageByIdInSource>).sourceIndex;
+            const withNotes = isDelete
+              ? removeNotesElementInSource(updated.source, noteIndex)
+              : duplicateNotesElementInSource(updated.source, noteIndex);
+            if (withNotes === null) {
+              return {
+                source,
+                value: {
+                  ok: false,
+                  error: isDelete
+                    ? 'could not delete page — `notes` export has an unexpected shape'
+                    : 'could not duplicate page — `notes` export has an unexpected shape',
+                } as const,
+              };
+            }
+            return {
+              source: withNotes,
+              value: {
+                ok: true,
+                index: updated.index,
+                pageId: isDelete
+                  ? (body.pageId as string)
+                  : (updated as ReturnType<typeof duplicatePageByIdInSource>).pageId,
+              } as const,
+            };
+          });
         } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
           return identityFailure(res, error);
         }
-        const noteIndex = isDelete
-          ? updated.index
-          : (updated as ReturnType<typeof duplicatePageByIdInSource>).sourceIndex;
-        const withNotes = isDelete
-          ? removeNotesElementInSource(updated.source, noteIndex)
-          : duplicateNotesElementInSource(updated.source, noteIndex);
-        if (withNotes === null) {
-          return json(res, 422, {
-            error: isDelete
-              ? 'could not delete page — `notes` export has an unexpected shape'
-              : 'could not duplicate page — `notes` export has an unexpected shape',
-          });
-        }
-        if (withNotes !== source) {
-          await fs.writeFile(entry, withNotes, 'utf8');
+        if (!transaction.value.ok) {
+          return json(res, 422, { error: transaction.value.error });
         }
         return json(res, 200, {
           ok: true,
           slideId,
-          index: updated.index,
-          pageId: 'pageId' in updated ? updated.pageId : body.pageId,
+          index: transaction.value.index,
+          pageId: transaction.value.pageId,
         });
       }
 
@@ -213,24 +225,30 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
         const name = validateSlideName(body.name);
         if (!name) return json(res, 400, { error: 'invalid name' });
 
-        const entry = resolveContentEntryPath(ctx, slideId, kind);
+        const entry = resolveContentEntry(ctx, slideId, kind);
         if (!entry) return json(res, 400, { error: 'invalid slideId' });
 
-        let source: string;
+        let transaction: { value: { ok: true } | { ok: false } };
         try {
-          source = await fs.readFile(entry, 'utf8');
-        } catch {
-          return json(res, 404, { error: 'slide not found' });
+          transaction = await transactSourceFile<{ ok: true } | { ok: false }>(
+            entry.filePath,
+            (source) => {
+              const updated = updateMetaTitleInSource(source, name);
+              return updated === null
+                ? { source, value: { ok: false } as const }
+                : { source: updated, value: { ok: true } as const };
+            },
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
+          throw error;
         }
-
-        const updated = updateMetaTitleInSource(source, name);
-        if (updated === null) {
+        if (!transaction.value.ok) {
           return json(res, 422, {
-            error: 'could not locate a safe place to write meta.title in index.tsx',
+            error: `could not locate a safe place to write meta.title in ${entry.sourceModule}`,
           });
-        }
-        if (updated !== source) {
-          await fs.writeFile(entry, updated, 'utf8');
         }
         // The TSX edit lands through Vite's normal HMR pipeline, but the
         // React state holding `slide.meta` in the editor won't re-fetch on

@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import type { ViteDevServer } from 'vite';
 import {
   b64urlEncode,
@@ -8,6 +7,7 @@ import {
   offsetToLine,
   parseMarkers,
 } from '../../editing/comments.ts';
+import { transactSourceFile } from '../../files/source-transactions.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
 import {
   type ApiContext,
@@ -58,27 +58,38 @@ export function registerCommentRoutes(server: ViteDevServer, ctx: ApiContext): v
           return json(res, 400, { error: 'missing text' });
         }
 
-        const source = await readSlideSource(file);
-        if (source === null) return json(res, 404, { error: 'slide not found' });
-
-        const plan = findInsertion(source, body.line, body.column);
-        if (!plan) {
+        const id = newCommentId();
+        const ts = new Date().toISOString();
+        const payload = b64urlEncode(JSON.stringify({ note: body.text, hint: body.hint }));
+        let transaction: { value: { ok: false } | { ok: true; line: number } };
+        try {
+          transaction = await transactSourceFile<{ ok: false } | { ok: true; line: number }>(
+            file,
+            (source) => {
+              const plan = findInsertion(source, body.line as number, body.column);
+              if (!plan) return { source, value: { ok: false } as const };
+              const marker = `\n${plan.indent}{/* @slide-comment id="${id}" ts="${ts}" text="${payload}" */}`;
+              const next = source.slice(0, plan.offset) + marker + source.slice(plan.offset);
+              return {
+                source: next,
+                value: { ok: true, line: offsetToLine(next, plan.offset + 1) } as const,
+              };
+            },
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
+          throw error;
+        }
+        if (!transaction.value.ok) {
           return json(res, 422, {
             error:
               'could not find a JSX container around line ' +
               `${body.line}. Try clicking a different element.`,
           });
         }
-
-        const id = newCommentId();
-        const ts = new Date().toISOString();
-        const payload = b64urlEncode(JSON.stringify({ note: body.text, hint: body.hint }));
-        const marker = `\n${plan.indent}{/* @slide-comment id="${id}" ts="${ts}" text="${payload}" */}`;
-
-        const next = source.slice(0, plan.offset) + marker + source.slice(plan.offset);
-        await fs.writeFile(file, next, 'utf8');
-        const markerLine = offsetToLine(next, plan.offset + 1);
-        return json(res, 200, { id, line: markerLine });
+        return json(res, 200, { id, line: transaction.value.line });
       }
 
       if (method === 'DELETE' && url.pathname.startsWith('/')) {
@@ -92,15 +103,23 @@ export function registerCommentRoutes(server: ViteDevServer, ctx: ApiContext): v
         const file = resolveSlideEntryPath(ctx, slideId);
         if (!file) return json(res, 400, { error: 'invalid slideId' });
 
-        const source = await readSlideSource(file);
-        if (source === null) return json(res, 404, { error: 'slide not found' });
-
-        const lines = source.split('\n');
-        const idRe = markerDeleteRegex(id);
-        const hit = lines.findIndex((l) => idRe.test(l));
-        if (hit === -1) return json(res, 404, { error: 'marker not found' });
-        lines.splice(hit, 1);
-        await fs.writeFile(file, lines.join('\n'), 'utf8');
+        let transaction: { value: { found: boolean } };
+        try {
+          transaction = await transactSourceFile<{ found: boolean }>(file, (source) => {
+            const lines = source.split('\n');
+            const idRe = markerDeleteRegex(id);
+            const hit = lines.findIndex((line) => idRe.test(line));
+            if (hit === -1) return { source, value: { found: false } };
+            lines.splice(hit, 1);
+            return { source: lines.join('\n'), value: { found: true } };
+          });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
+          throw error;
+        }
+        if (!transaction.value.found) return json(res, 404, { error: 'marker not found' });
         return json(res, 200, { ok: true });
       }
 

@@ -55,7 +55,11 @@ The value is passed straight to Vite's `base` and to React Router's `basename`, 
 
 ## Authoring slides
 
-Slides live under `slides/<kebab-case-id>/index.tsx` and default-export an array of `Page` components.
+Slides live under `slides/<kebab-case-id>/index.{tsx,jsx,ts,js}` and default-export an array of
+`Page` components. When more than one entry extension exists in a folder, OpenSlide selects the
+first in this order: `.tsx`, `.jsx`, `.ts`, `.js`. The selected filename, including its extension,
+is part of every page ID.
+
 Use `page()` to give each authored occurrence a persistent identity:
 
 ```tsx
@@ -77,6 +81,15 @@ Plain arrays such as `[Cover]` remain compatible. A unique named component gets 
 fallback. Repeating the same legacy component still renders, but editing and structural writes stop
 with `PageIdentityCollisionError` until each occurrence is wrapped with a unique `page()` ID. See
 [Persistent page occurrence identity](../../docs/page-occurrence-identity.md) for migration details.
+
+The page-array source grammar is deliberately narrow. OpenSlide accepts an inline default-exported
+array, or one top-level `const` initialized directly with an array and then default-exported by
+name. Parentheses, TypeScript `as`, and `satisfies` wrappers are allowed. A `page()` call is authored
+only when its callee is a value import from `@open-slide/core`; named aliases and namespace imports
+work. A local function named `page`, a type-only import, or a similarly named export from another
+package does not establish identity. Mutable, imported, reassigned, shadowed, sparse, or spread page
+arrays render only outside identity-dependent source operations; the writer refuses to guess how to
+rewrite them.
 
 ## Exports
 

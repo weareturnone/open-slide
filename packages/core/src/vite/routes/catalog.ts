@@ -23,14 +23,8 @@ import {
   migrateLegacyPageOccurrencesInSource,
   SLIDE_ID_RE,
 } from '../../editing/slide-ops.ts';
-import {
-  type ApiContext,
-  contentRoot,
-  contentSourceModule,
-  json,
-  readBody,
-  resolveContentEntryPath,
-} from './context.ts';
+import { transactSourceFile } from '../../files/source-transactions.ts';
+import { type ApiContext, contentRoot, json, readBody, resolveContentEntry } from './context.ts';
 
 type ContentKind = 'slide' | 'document';
 type CatalogEntry = {
@@ -175,8 +169,9 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
         ) {
           return json(res, 400, { error: 'Invalid title, ID, or template' });
         }
-        const sourcePath = resolveContentEntryPath(ctx, deckId, kind);
-        if (!sourcePath) return json(res, 400, { error: 'Invalid content ID' });
+        const entry = resolveContentEntry(ctx, deckId, kind);
+        if (!entry) return json(res, 400, { error: 'Invalid content ID' });
+        const sourcePath = entry.filePath;
         try {
           await fs.access(sourcePath);
           return json(res, 409, { error: 'Content with this ID already exists' });
@@ -188,10 +183,7 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
         }
         let createdSource = catalog.createDeckSource({ title, template, kind });
         try {
-          createdSource = migrateLegacyPageOccurrencesInSource(
-            createdSource,
-            contentSourceModule(deckId, kind),
-          );
+          createdSource = migrateLegacyPageOccurrencesInSource(createdSource, entry.sourceModule);
         } catch (error) {
           return identityFailure(res, error);
         }
@@ -201,49 +193,82 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
       }
 
       const slideId = typeof body.slideId === 'string' ? body.slideId : '';
-      const sourcePath = resolveContentEntryPath(ctx, slideId, kind);
-      if (!sourcePath) return json(res, 400, { error: 'Invalid content ID' });
-      const current = await fs.readFile(sourcePath, 'utf8');
-      const sourceModule = contentSourceModule(slideId, kind);
-      let occurrences: ReturnType<typeof sourcePageOccurrencesOrThrow>;
-      let index: number;
+      const entry = resolveContentEntry(ctx, slideId, kind);
+      if (!entry) return json(res, 400, { error: 'Invalid content ID' });
+      type CatalogMutationValue =
+        | { ok: false; status: number; error: string }
+        | { ok: true; componentName: string; index: number; pageId: string };
+      let transaction: Awaited<ReturnType<typeof transactSourceFile<CatalogMutationValue>>>;
       try {
-        occurrences = sourcePageOccurrencesOrThrow(current, sourceModule);
-        index = insertionIndex(
-          occurrences.map((occurrence) => occurrence.id),
-          body.beforePageId,
-          body.afterPageId,
-        );
+        transaction = await transactSourceFile<CatalogMutationValue>(entry.filePath, (current) => {
+          const occurrences = sourcePageOccurrencesOrThrow(current, entry.sourceModule);
+          const index = insertionIndex(
+            occurrences.map((occurrence) => occurrence.id),
+            body.beforePageId,
+            body.afterPageId,
+          );
+          const pageStableId = availableStableId(
+            template.id,
+            entry.sourceModule,
+            occurrences.map((occurrence) => occurrence.id),
+          );
+          const name = componentName(template.id, current);
+          const componentSource = template.source.replace('__COMPONENT__', name);
+          const dependencies = catalog.resolveCatalogInsertion(current, template, componentSource);
+          if (!dependencies.ok) {
+            return {
+              source: current,
+              value: { ok: false, status: 422, error: dependencies.error } as const,
+            };
+          }
+          const withPage = insertPageComponentInSource(
+            dependencies.source,
+            name,
+            dependencies.componentSource,
+            index,
+            pageStableId,
+          );
+          if (withPage === null) {
+            return {
+              source: current,
+              value: {
+                ok: false,
+                status: 422,
+                error: 'This content cannot accept the selected catalog page',
+              } as const,
+            };
+          }
+          const nextSource = insertNotesElementInSource(withPage, index);
+          if (nextSource === null) {
+            return {
+              source: current,
+              value: { ok: false, status: 422, error: 'Could not keep notes aligned' } as const,
+            };
+          }
+          return {
+            source: nextSource,
+            value: {
+              ok: true,
+              componentName: name,
+              index,
+              pageId: authoredPageId(entry.sourceModule, pageStableId),
+            } as const,
+          };
+        });
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return json(res, 404, { error: 'content not found' });
+        }
         return identityFailure(res, error);
       }
-      const pageStableId = availableStableId(
-        template.id,
-        sourceModule,
-        occurrences.map((occurrence) => occurrence.id),
-      );
-      const name = componentName(template.id, current);
-      const componentSource = template.source.replace('__COMPONENT__', name);
-      const dependencies = catalog.resolveCatalogInsertion(current, template, componentSource);
-      if (!dependencies.ok) return json(res, 422, { error: dependencies.error });
-      const withPage = insertPageComponentInSource(
-        dependencies.source,
-        name,
-        dependencies.componentSource,
-        index,
-        pageStableId,
-      );
-      if (withPage === null) {
-        return json(res, 422, { error: 'This content cannot accept the selected catalog page' });
+      if (!transaction.value.ok) {
+        return json(res, transaction.value.status, { error: transaction.value.error });
       }
-      const nextSource = insertNotesElementInSource(withPage, index);
-      if (nextSource === null) return json(res, 422, { error: 'Could not keep notes aligned' });
-      await fs.writeFile(sourcePath, nextSource, 'utf8');
       return json(res, 200, {
         ok: true,
-        componentName: name,
-        index,
-        pageId: authoredPageId(sourceModule, pageStableId),
+        componentName: transaction.value.componentName,
+        index: transaction.value.index,
+        pageId: transaction.value.pageId,
         kind,
       });
     } catch (error) {

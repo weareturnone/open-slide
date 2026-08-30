@@ -8,16 +8,17 @@ export type HostedVersionState = {
 };
 
 export type HostedOperationReceipt = {
-  version: number;
+  version: 1;
   operationId: string;
   requestHash: string;
   kind: string;
   artifactId: string;
+  baseDraftSha: string;
   baseMainSha: string;
   draftCommitSha: string;
   targetMainSha: string;
   proof: Record<string, unknown>;
-  createdAt?: string | null;
+  createdAt: string;
 };
 
 export type HostedOperationStatus = {

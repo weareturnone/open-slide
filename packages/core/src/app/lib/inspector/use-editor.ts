@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import type { RunStructuralMutation } from '@/components/hosted-operation-provider';
 import type { AuthoringVersionSnapshot } from '../authoring';
 import {
   type PageId,
@@ -28,6 +29,7 @@ export type EditResult = { ok: boolean; error?: string };
 export type EditBatchResult = {
   results: EditResult[];
   version?: AuthoringVersionSnapshot;
+  changed?: boolean;
 };
 
 type EditResponseBody = {
@@ -53,6 +55,61 @@ function versionFromBody(body: EditResponseBody): AuthoringVersionSnapshot | und
     : undefined;
 }
 
+type InspectorBatchRequest = {
+  slideId: string;
+  kind: ContentKind;
+  pageId: PageId;
+  edits: Edit[];
+};
+
+export async function submitInspectorEditBatch(
+  request: InspectorBatchRequest,
+  options: { hosted: boolean; runStructuralMutation?: RunStructuralMutation },
+): Promise<EditBatchResult> {
+  let body: EditResponseBody;
+  let version: AuthoringVersionSnapshot | undefined;
+  const payload = {
+    ...request,
+    edits: request.edits.map((edit) => ({ ...edit, strict: true })),
+  };
+  if (options.hosted) {
+    if (!options.runStructuralMutation) {
+      throw new Error('Hosted inspector coordination is unavailable');
+    }
+    const hosted = await options.runStructuralMutation<EditResponseBody>({
+      label: 'Save inspector edits',
+      protocolKind: 'inspector.batch-edit',
+      endpoint: '/__edit/batch',
+      method: 'POST',
+      body: payload,
+    });
+    body = hosted.result;
+    version = {
+      draftSha: hosted.status.draftSha,
+      mainSha: hosted.status.mainSha,
+      deployedSha: hosted.status.deployedSha,
+      hasDraftChanges: hosted.status.draftSha !== hosted.status.mainSha,
+    };
+  } else {
+    const response = await fetch('/__edit/batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    body = (await response.json().catch(() => ({}))) as EditResponseBody;
+    if (!response.ok) {
+      throw new Error(body.error ?? `POST /__edit/batch → ${response.status}`);
+    }
+    version = versionFromBody(body);
+  }
+  if (!Array.isArray(body.results) || body.results.length !== request.edits.length) {
+    throw new Error(
+      'Studio returned an incomplete save result. Your edits are still in this tab; try again.',
+    );
+  }
+  return { results: body.results, version, changed: body.changed };
+}
+
 export class NoOpEditError extends Error {
   constructor() {
     super(
@@ -67,6 +124,7 @@ export function useEditor(
   kind: ContentKind = 'slide',
   pageId: PageId | null = null,
   pageIdentityError: PageIdentityError | null = null,
+  runStructuralMutation?: RunStructuralMutation,
 ) {
   const currentPageId = useCallback((): PageId => {
     if (pageIdentityError) throw pageIdentityError;
@@ -82,21 +140,20 @@ export function useEditor(
   const applyEdit = useCallback(
     async (line: number, column: number, ops: EditOp[]) => {
       const identity = currentPageId();
-      const res = await fetch('/__edit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, kind, pageId: identity, line, column, ops, strict: true }),
-      });
-      const body = (await res.json().catch(() => ({}))) as EditResponseBody;
-      if (!res.ok) {
-        throw new Error(body.error ?? `POST /__edit → ${res.status}`);
+      const batch = await submitInspectorEditBatch(
+        { slideId, kind, pageId: identity, edits: [{ line, column, ops }] },
+        { hosted: !import.meta.env.DEV, runStructuralMutation },
+      );
+      const result = batch.results[0];
+      if (!result?.ok) {
+        throw new Error(result?.error ?? 'Studio could not save the inspector edit');
       }
-      if (body.changed === false) {
+      if (batch.changed === false) {
         throw new NoOpEditError();
       }
-      return versionFromBody(body);
+      return batch.version;
     },
-    [slideId, kind, currentPageId],
+    [slideId, kind, currentPageId, runStructuralMutation],
   );
 
   // Batch many element edits into one file write and one HMR tick.
@@ -106,28 +163,12 @@ export function useEditor(
     async (edits: Edit[]): Promise<EditBatchResult> => {
       if (edits.length === 0) return { results: [] };
       const identity = currentPageId();
-      const res = await fetch('/__edit/batch', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          slideId,
-          kind,
-          pageId: identity,
-          edits: edits.map((edit) => ({ ...edit, strict: true })),
-        }),
-      });
-      const body = (await res.json().catch(() => ({}))) as EditResponseBody;
-      if (!res.ok) {
-        throw new Error(body.error ?? `POST /__edit/batch → ${res.status}`);
-      }
-      if (!Array.isArray(body.results) || body.results.length !== edits.length) {
-        throw new Error(
-          'Studio returned an incomplete save result. Your edits are still in this tab; try again.',
-        );
-      }
-      return { results: body.results, version: versionFromBody(body) };
+      return submitInspectorEditBatch(
+        { slideId, kind, pageId: identity, edits },
+        { hosted: !import.meta.env.DEV, runStructuralMutation },
+      );
     },
-    [slideId, kind, currentPageId],
+    [slideId, kind, currentPageId, runStructuralMutation],
   );
 
   return { applyEdit, applyEdits };

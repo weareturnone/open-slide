@@ -5,6 +5,7 @@ import fg from 'fast-glob';
 import { loadConfigFromFile, normalizePath, type Plugin, type ViteDevServer } from 'vite';
 import type { OpenSlideConfig } from '../config.ts';
 import { SLIDE_ID_RE } from '../editing/slide-ops.ts';
+import { canonicalizeContentEntries } from '../files/content-entry.ts';
 import { foldersManifestPath, readManifest } from '../files/folders.ts';
 import { generateBrandingCss, resolveBrandingUrls, transformBrandingHtml } from './branding.ts';
 import { hasRecentWrite } from './recent-writes.ts';
@@ -106,6 +107,8 @@ export async function generateSlidesModule(
   documentFiles: string[] = [],
   documentsRoot: string = path.resolve(path.dirname(slidesRoot), 'documents'),
 ): Promise<{ code: string; ignored: string[] }> {
+  files = canonicalizeContentEntries(files, slidesRoot);
+  documentFiles = canonicalizeContentEntries(documentFiles, documentsRoot);
   const scanned = await Promise.all(
     files.map(async (abs) => {
       const id = toId(abs, slidesRoot);

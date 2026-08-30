@@ -145,4 +145,125 @@ describe('identity-authoritative page source operations', () => {
     expect(inserted).toContain("page('agenda', StudioAgenda)");
     expect(inserted).toContain("import { page } from '@open-slide/core';");
   });
+
+  it('recognizes named aliases and reuses the imported binding for writes', () => {
+    const source = [
+      "import { page as definePage } from '@open-slide/core';",
+      'const Shared = () => null;',
+      "export default [definePage('first', Shared), definePage('second', Shared)];",
+      '',
+    ].join('\n');
+
+    expect(pageIds(source)).toEqual([`${sourceModule}#first`, `${sourceModule}#second`]);
+    const duplicated = duplicatePageByIdInSource(source, `${sourceModule}#first`, sourceModule);
+    expect(duplicated.source).toContain("definePage('first-copy', Shared)");
+    expect(duplicated.source.match(/from '@open-slide\/core'/g)).toHaveLength(1);
+  });
+
+  it('recognizes namespace imports and reuses the namespace member for migration', () => {
+    const source = [
+      "import * as OpenSlide from '@open-slide/core';",
+      'const Cover = () => null;',
+      'const Closing = () => null;',
+      'export default [Cover, Closing];',
+      '',
+    ].join('\n');
+
+    const migrated = migrateLegacyPageOccurrencesInSource(source, sourceModule);
+    expect(migrated).toContain("OpenSlide.page('cover', Cover)");
+    expect(migrated).toContain("OpenSlide.page('closing', Closing)");
+    expect(pageIds(migrated)).toEqual([`${sourceModule}#cover`, `${sourceModule}#closing`]);
+  });
+
+  it('rejects spelling matches that are not value imports from core', () => {
+    const sources = [
+      [
+        'const page = (id: string, component: unknown) => component;',
+        'const Cover = () => null;',
+        "export default [page('cover', Cover)];",
+      ].join('\n'),
+      [
+        "import type { page } from '@open-slide/core';",
+        'const Cover = () => null;',
+        "export default [page('cover', Cover)];",
+      ].join('\n'),
+      [
+        "import { page } from 'unrelated-package';",
+        'const Cover = () => null;',
+        "export default [page('cover', Cover)];",
+      ].join('\n'),
+      [
+        "import * as Other from 'unrelated-package';",
+        'const Cover = () => null;',
+        "export default [Other.page('cover', Cover)];",
+      ].join('\n'),
+    ];
+
+    for (const source of sources) {
+      expect(resolvePageIdentitiesInSource(source, sourceModule).error).not.toBeNull();
+    }
+  });
+
+  it('supports an immutable top-level const array without rewriting its export', () => {
+    const source = [
+      "import { page as definePage, type Page } from '@open-slide/core';",
+      'const Shared = () => null;',
+      'const pages: Page[] = ([',
+      "  definePage('first', Shared), // authored first",
+      "  definePage('second', Shared),",
+      '] satisfies Page[]);',
+      'export default pages;',
+      '',
+    ].join('\n');
+
+    expect(pageIds(source)).toEqual([`${sourceModule}#first`, `${sourceModule}#second`]);
+    const reordered = reorderDefaultExportPagesByIdInSource(
+      source,
+      [`${sourceModule}#second`, `${sourceModule}#first`],
+      sourceModule,
+    );
+    expect(reordered.source).toContain('export default pages;');
+    expect(reordered.source).toContain("definePage('first', Shared), // authored first");
+    expect(pageIds(reordered.source)).toEqual([`${sourceModule}#second`, `${sourceModule}#first`]);
+
+    const inserted = insertPageComponentInSource(
+      reordered.source,
+      'StudioAgenda',
+      'const StudioAgenda = () => null;',
+      1,
+      'agenda',
+    );
+    expect(inserted).not.toBeNull();
+    expect(inserted).toContain("definePage('agenda', StudioAgenda)");
+    expect(inserted).toContain('export default pages;');
+  });
+
+  it('rejects mutable, imported, spread, reassigned, and ambiguous page arrays', () => {
+    const unsupported = [
+      ['const Cover = () => null;', 'let pages = [Cover];', 'export default pages;'].join('\n'),
+      ["import pages from './pages';", 'export default pages;'].join('\n'),
+      [
+        'const Cover = () => null;',
+        'const rest = [Cover];',
+        'const pages = [Cover, ...rest];',
+        'export default pages;',
+      ].join('\n'),
+      [
+        'const Cover = () => null;',
+        'const pages = [Cover];',
+        'pages = [Cover];',
+        'export default pages;',
+      ].join('\n'),
+      [
+        'const Cover = () => null;',
+        'const pages = [Cover];',
+        '{ const pages = [Cover]; }',
+        'export default pages;',
+      ].join('\n'),
+    ];
+
+    for (const source of unsupported) {
+      expect(resolvePageIdentitiesInSource(source, sourceModule).error).not.toBeNull();
+    }
+  });
 });

@@ -396,15 +396,16 @@ export function InspectorProvider({
   const [inlineEdit, setInlineEdit] = useState<InlineEditTarget | null>(null);
   const [opsVersion, setOpsVersion] = useState(0);
   const commentsEnabled = kind === 'slide';
-  const { comments, error, add, remove } = useComments(slideId, commentsEnabled);
+  const { comments, error, refetch, add, remove } = useComments(slideId, commentsEnabled);
+  const { runStructuralMutation, structuralLocked } = useHostedOperation();
   const { applyEdit: requestEdit, applyEdits } = useEditor(
     slideId,
     kind,
     pageId,
     pageIdentityError,
+    runStructuralMutation,
   );
   const history = useHistory();
-  const { structuralLocked } = useHostedOperation();
 
   const pendingRef = useRef<Map<string, Bucket>>(new Map());
   const committedPreviewRef = useRef<Map<string, Bucket>>(new Map());

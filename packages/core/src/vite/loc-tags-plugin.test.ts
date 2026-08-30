@@ -437,6 +437,12 @@ describe('locTagsPlugin', () => {
     expectTaggedTransform('/repo/slides/cover/index.tsx');
   });
 
+  it('tags JSX entry files without changing their extension in provenance', () => {
+    const out = transformWithLocTags('/repo/slides/cover/index.jsx');
+    if (out === null) throw new Error('expected tagged transform result');
+    expect(out.code).toContain('data-slide-source="slides/cover/index.jsx"');
+  });
+
   it('tags shared slide source files', () => {
     expectTaggedTransform('/repo/slides/cover/shared.tsx');
   });
@@ -485,6 +491,20 @@ describe('locTagsPlugin', () => {
 
   it('skips colocated test files', () => {
     expect(transformWithLocTags('/repo/slides/cover/index.test.tsx')).toBeNull();
+  });
+});
+
+describe('legacy registration source grammar', () => {
+  it('registers legacy names from an immutable exported const array', () => {
+    const src = [
+      'const Cover = () => <main />;',
+      'const pages = [Cover] as const;',
+      'export default pages;',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src, 'slides/legacy/index.jsx');
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('register(Cover, "slides/legacy/index.jsx", "Cover")');
   });
 });
 

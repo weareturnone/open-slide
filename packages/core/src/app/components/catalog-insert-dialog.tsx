@@ -109,6 +109,7 @@ export function CatalogInsertDialog({
       }
       const hosted = await runStructuralMutation<Record<string, unknown>>({
         label: `Insert ${kind === 'document' ? 'page' : 'slide'}`,
+        protocolKind: 'catalog.insert',
         endpoint,
         method: 'POST',
         body: { slideId, beforePageId, afterPageId, templateId: selectedId, kind },

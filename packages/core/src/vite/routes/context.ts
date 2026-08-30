@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import path from 'node:path';
 import type { Connect } from 'vite';
-import { resolveSlideEntry } from '../../editing/slide-ops.ts';
+import { SLIDE_ID_RE } from '../../editing/slide-ops.ts';
+import { resolveExistingContentEntry } from '../../files/content-entry.ts';
 import { foldersManifestPath } from '../../files/folders.ts';
 
 export type ApiContext = {
@@ -72,7 +73,19 @@ export function json(res: ServerResponse, status: number, body: unknown) {
 }
 
 export function resolveSlideEntryPath(ctx: ApiContext, slideId: string): string | null {
-  return resolveSlideEntry(ctx.slidesRoot, slideId);
+  return resolveSlidePath(ctx.userCwd, ctx.slidesDir, slideId);
+}
+
+export function resolveSlidePath(
+  userCwd: string,
+  slidesDir: string,
+  slideId: string,
+): string | null {
+  if (!SLIDE_ID_RE.test(slideId)) return null;
+  const slidesRoot = path.resolve(userCwd, slidesDir);
+  const contentDirectory = path.resolve(slidesRoot, slideId);
+  if (!contentDirectory.startsWith(slidesRoot + path.sep)) return null;
+  return resolveExistingContentEntry(contentDirectory) ?? path.join(contentDirectory, 'index.tsx');
 }
 
 export async function readSlideSource(file: string): Promise<string | null> {
@@ -92,10 +105,24 @@ export function contentDir(ctx: ApiContext, kind: unknown): string {
   return kind === 'document' ? ctx.documentsDir : ctx.slidesDir;
 }
 
-export function contentSourceModule(id: string, kind: unknown): string {
-  return `${kind === 'document' ? 'documents' : 'slides'}/${id}/index.tsx`;
-}
+export type ResolvedContentEntry = {
+  filePath: string;
+  sourceModule: string;
+};
 
 export function resolveContentEntryPath(ctx: ApiContext, id: string, kind: unknown): string | null {
-  return resolveSlideEntry(contentRoot(ctx, kind), id);
+  return resolveContentEntry(ctx, id, kind)?.filePath ?? null;
+}
+
+export function resolveContentEntry(
+  ctx: ApiContext,
+  id: string,
+  kind: unknown,
+): ResolvedContentEntry | null {
+  const filePath = resolveSlidePath(ctx.userCwd, contentDir(ctx, kind), id);
+  if (!filePath) return null;
+  return {
+    filePath,
+    sourceModule: `${kind === 'document' ? 'documents' : 'slides'}/${id}/${path.basename(filePath)}`,
+  };
 }

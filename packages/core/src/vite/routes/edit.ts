@@ -1,19 +1,12 @@
-import fs from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import type { ViteDevServer } from 'vite';
 import { isPageIdentityError, PageIdentityStaleError } from '../../app/lib/page-identity.ts';
 import { applyEdit, applyEditBatch, type EditOp } from '../../editing/edit-ops.ts';
 import { sourcePageOccurrencesOrThrow } from '../../editing/page-identities.ts';
 import { applyRevertAsset } from '../../editing/revert-asset.ts';
+import { transactSourceFile } from '../../files/source-transactions.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
-import {
-  type ApiContext,
-  contentSourceModule,
-  json,
-  readBody,
-  readSlideSource,
-  resolveContentEntryPath,
-} from './context.ts';
+import { type ApiContext, json, readBody, resolveContentEntry } from './context.ts';
 
 // POST /__edit                applyEdit({ slideId, line, column, ops })
 // POST /__edit/revert-asset   applyRevertAsset({ slideId, assetPath })
@@ -50,14 +43,9 @@ function identityFailure(res: ServerResponse, error: unknown): void {
   json(res, status, { error: error.message, name: error.name, code: error.code });
 }
 
-function assertCurrentPageIdentity(
-  source: string,
-  slideId: string,
-  kind: 'slide' | 'document' | undefined,
-  pageId: unknown,
-): void {
+function assertCurrentPageIdentity(source: string, sourceModule: string, pageId: unknown): void {
   if (typeof pageId !== 'string') throw new PageIdentityStaleError(String(pageId ?? ''));
-  const occurrences = sourcePageOccurrencesOrThrow(source, contentSourceModule(slideId, kind));
+  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
   if (!occurrences.some((occurrence) => occurrence.id === pageId)) {
     throw new PageIdentityStaleError(pageId);
   }
@@ -75,25 +63,40 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
       if (url.pathname === '/') {
         const body = (await readBody(req)) as EditBody;
         const slideId = body.slideId ?? '';
-        const file = resolveContentEntryPath(ctx, slideId, body.kind);
-        if (!file) return json(res, 400, { error: 'invalid slideId' });
+        const entry = resolveContentEntry(ctx, slideId, body.kind);
+        if (!entry) return json(res, 400, { error: 'invalid slideId' });
         if (!body.line || body.line < 1) return json(res, 400, { error: 'invalid line' });
         if (!Array.isArray(body.ops)) return json(res, 400, { error: 'missing ops' });
 
-        const source = await readSlideSource(file);
-        if (source === null) return json(res, 404, { error: 'slide not found' });
-
+        type EditValue = { ok: false; status: number; error: string } | { ok: true };
+        let transaction: { changed: boolean; value: EditValue };
         try {
-          assertCurrentPageIdentity(source, slideId, body.kind, body.pageId);
+          transaction = await transactSourceFile<EditValue>(entry.filePath, (source) => {
+            assertCurrentPageIdentity(source, entry.sourceModule, body.pageId);
+            const result = applyEdit(
+              source,
+              body.line as number,
+              body.column ?? 0,
+              body.ops ?? [],
+              body.strict,
+            );
+            return result.ok
+              ? { source: result.source, value: { ok: true } as const }
+              : {
+                  source,
+                  value: { ok: false, status: result.status, error: result.error } as const,
+                };
+          });
         } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
           return identityFailure(res, error);
         }
-
-        const result = applyEdit(source, body.line, body.column ?? 0, body.ops, body.strict);
-        if (!result.ok) return json(res, result.status, { error: result.error });
-        const changed = result.source !== source;
-        if (changed) await fs.writeFile(file, result.source, 'utf8');
-        return json(res, 200, { ok: true, changed });
+        if (!transaction.value.ok) {
+          return json(res, transaction.value.status, { error: transaction.value.error });
+        }
+        return json(res, 200, { ok: true, changed: transaction.changed });
       }
 
       if (url.pathname === '/revert-asset') {
@@ -104,8 +107,8 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
         };
         const slideId = body.slideId ?? '';
         const assetPath = body.assetPath;
-        const file = resolveContentEntryPath(ctx, slideId, body.kind);
-        if (!file) return json(res, 400, { error: 'invalid slideId' });
+        const entry = resolveContentEntry(ctx, slideId, body.kind);
+        if (!entry) return json(res, 400, { error: 'invalid slideId' });
         if (typeof assetPath !== 'string' || !assetPath) {
           return json(res, 400, { error: 'missing assetPath' });
         }
@@ -113,14 +116,28 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
           return json(res, 400, { error: 'asset path must start with ./assets/ or @assets/' });
         }
 
-        const source = await readSlideSource(file);
-        if (source === null) return json(res, 404, { error: 'slide not found' });
-
-        const result = applyRevertAsset(source, assetPath);
-        if (!result.ok) return json(res, result.status, { error: result.error });
-        const changed = result.source !== source;
-        if (changed) await fs.writeFile(file, result.source, 'utf8');
-        return json(res, 200, { ok: true, changed });
+        type RevertValue = { ok: false; status: number; error: string } | { ok: true };
+        let transaction: { changed: boolean; value: RevertValue };
+        try {
+          transaction = await transactSourceFile<RevertValue>(entry.filePath, (source) => {
+            const result = applyRevertAsset(source, assetPath);
+            return result.ok
+              ? { source: result.source, value: { ok: true } as const }
+              : {
+                  source,
+                  value: { ok: false, status: result.status, error: result.error } as const,
+                };
+          });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
+          throw error;
+        }
+        if (!transaction.value.ok) {
+          return json(res, transaction.value.status, { error: transaction.value.error });
+        }
+        return json(res, 200, { ok: true, changed: transaction.changed });
       }
 
       // One read-modify-write per batch so a multi-element edit session
@@ -129,18 +146,9 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
       if (url.pathname === '/batch') {
         const body = (await readBody(req)) as EditBatchBody;
         const slideId = body.slideId ?? '';
-        const file = resolveContentEntryPath(ctx, slideId, body.kind);
-        if (!file) return json(res, 400, { error: 'invalid slideId' });
+        const entry = resolveContentEntry(ctx, slideId, body.kind);
+        if (!entry) return json(res, 400, { error: 'invalid slideId' });
         if (!Array.isArray(body.edits)) return json(res, 400, { error: 'missing edits' });
-
-        const source = await readSlideSource(file);
-        if (source === null) return json(res, 404, { error: 'slide not found' });
-
-        try {
-          assertCurrentPageIdentity(source, slideId, body.kind, body.pageId);
-        } catch (error) {
-          return identityFailure(res, error);
-        }
 
         const edits = body.edits.map((edit) => ({
           line: edit.line ?? 0,
@@ -151,18 +159,41 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
         if (edits.some((edit) => edit.line < 1 || !Array.isArray(edit.ops))) {
           return json(res, 400, { error: 'invalid edit' });
         }
-        const result = applyEditBatch(source, edits);
-        if (!result.ok) {
-          return json(res, result.status, {
-            error: result.error,
-            editIndex: result.editIndex,
+        type BatchValue =
+          | { ok: false; status: number; error: string; editIndex: number }
+          | { ok: true };
+        let transaction: { changed: boolean; value: BatchValue };
+        try {
+          transaction = await transactSourceFile<BatchValue>(entry.filePath, (source) => {
+            assertCurrentPageIdentity(source, entry.sourceModule, body.pageId);
+            const result = applyEditBatch(source, edits);
+            return result.ok
+              ? { source: result.source, value: { ok: true } as const }
+              : {
+                  source,
+                  value: {
+                    ok: false,
+                    status: result.status,
+                    error: result.error,
+                    editIndex: result.editIndex,
+                  } as const,
+                };
+          });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return json(res, 404, { error: 'slide not found' });
+          }
+          return identityFailure(res, error);
+        }
+        if (!transaction.value.ok) {
+          return json(res, transaction.value.status, {
+            error: transaction.value.error,
+            editIndex: transaction.value.editIndex,
           });
         }
-        const changed = result.source !== source;
-        if (changed) await fs.writeFile(file, result.source, 'utf8');
         return json(res, 200, {
           ok: true,
-          changed,
+          changed: transaction.changed,
           results: edits.map(() => ({ ok: true })),
         });
       }

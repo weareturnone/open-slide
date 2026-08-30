@@ -82,7 +82,10 @@ export function validateStablePageId(value: string): StablePageId {
 }
 
 export function normalizeSourceModule(value: string): SourceModuleId {
-  const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (/^[A-Za-z]:/.test(value)) {
+    throw new PageIdentityValidationError(value, 'source module');
+  }
+  const normalized = value.replace(/\\/g, '/');
   const segments = normalized.split('/');
   if (
     normalized.length === 0 ||

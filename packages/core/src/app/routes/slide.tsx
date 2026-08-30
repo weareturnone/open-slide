@@ -243,6 +243,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         }
         const hosted = await runStructuralMutation<Record<string, unknown>>({
           label: `Reorder ${isDocument ? 'pages' : 'slides'}`,
+          protocolKind: 'slide.reorder',
           endpoint: `/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`,
           method: 'PUT',
           body: { pageIds: orderedPageIds, focusPageId: currentPageIds[index] },
@@ -310,6 +311,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         }
         const hosted = await runStructuralMutation<Record<string, unknown>>({
           label: `Duplicate ${isDocument ? 'page' : 'slide'}`,
+          protocolKind: 'page.duplicate',
           endpoint: `/__slides/${encodeURIComponent(slideId)}/pages/duplicate${kindQuery}`,
           method: 'POST',
           body: { pageId: currentPageIds[i] },
@@ -386,6 +388,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         const focusIndex = Math.max(0, Math.min(i, nextPages.length - 1));
         const hosted = await runStructuralMutation<Record<string, unknown>>({
           label: `Delete ${isDocument ? 'page' : 'slide'}`,
+          protocolKind: 'page.delete',
           endpoint: `/__slides/${encodeURIComponent(slideId)}/pages${kindQuery}`,
           method: 'DELETE',
           body: { pageId: currentPageIds[i] },
