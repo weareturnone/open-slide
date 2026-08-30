@@ -7,6 +7,52 @@ import {
   readSlideSource,
 } from './helpers.ts';
 
+type RenderedProvenance = {
+  sourceModule: string;
+  elementLocation: string;
+  targetFingerprint: string;
+  callsites: [string, string][];
+};
+
+async function renderedProvenance(
+  locator: import('@playwright/test').Locator,
+): Promise<RenderedProvenance> {
+  return locator.evaluate((element) => {
+    type Fiber = {
+      return: Fiber | null;
+      key?: null | string | number;
+      memoizedProps?: Record<string, unknown>;
+      type?: unknown;
+    };
+    const fiberKey = Object.keys(element).find((key) => key.startsWith('__reactFiber$'));
+    if (!fiberKey) throw new Error('React fiber is unavailable');
+    let fiber: Fiber | null = (element as unknown as Record<string, Fiber>)[fiberKey];
+    let sourceModule = '';
+    let elementLocation = '';
+    let targetFingerprint = '';
+    const callsites: [string, string][] = [];
+    while (fiber) {
+      const props = fiber.memoizedProps;
+      const callsite = props?.['data-slide-callsite'];
+      if (typeof fiber.type !== 'string' && typeof callsite === 'string') {
+        callsites.push([callsite, String(fiber.key ?? '')]);
+      }
+      const source = props?.['data-slide-source'];
+      if (!sourceModule && typeof source === 'string') sourceModule = source;
+      const location = props?.['data-slide-loc'];
+      if (!elementLocation && typeof location === 'string') elementLocation = location;
+      const fingerprint = props?.['data-slide-target'];
+      if (!targetFingerprint && typeof fingerprint === 'string') targetFingerprint = fingerprint;
+      fiber = fiber.return;
+    }
+    callsites.reverse();
+    if (!sourceModule || !elementLocation || !targetFingerprint || callsites.length === 0) {
+      throw new Error('Rendered provenance is incomplete');
+    }
+    return { sourceModule, elementLocation, targetFingerprint, callsites };
+  });
+}
+
 test.describe('inspector editing', () => {
   const createdSlides: string[] = [];
 
@@ -220,6 +266,39 @@ test.describe('inspector editing', () => {
     expect(landscapeCrop).toMatch(/^inset\(/);
     expect(portraitCrop).toMatch(/^inset\(/);
     expect(landscapeCrop).not.toBe(portraitCrop);
+  });
+
+  test('nested component provenance is stable across canvas and thumbnail renders', async ({
+    page,
+    request,
+  }) => {
+    const slideId = 'insp-provenance-roots';
+    await openEditable(page, request, slideId);
+    const thumbnail = page.getByRole('button', { name: 'Go to page 1' });
+
+    const canvasLeft = await renderedProvenance(
+      editorCanvas(page).locator('[data-provenance-label="Nested provenance left"]'),
+    );
+    const thumbnailLeft = await renderedProvenance(
+      thumbnail.locator('[data-provenance-label="Nested provenance left"]'),
+    );
+    const canvasRight = await renderedProvenance(
+      editorCanvas(page).locator('[data-provenance-label="Nested provenance right"]'),
+    );
+    const thumbnailRight = await renderedProvenance(
+      thumbnail.locator('[data-provenance-label="Nested provenance right"]'),
+    );
+
+    expect(thumbnailLeft).toEqual(canvasLeft);
+    expect(thumbnailRight).toEqual(canvasRight);
+    expect(canvasLeft).not.toEqual(canvasRight);
+    expect(canvasLeft.sourceModule).toBe(`slides/${slideId}/index.tsx`);
+    expect(canvasLeft.elementLocation).toBe(canvasRight.elementLocation);
+    expect(canvasLeft.targetFingerprint).toBe(canvasRight.targetFingerprint);
+    expect(canvasLeft.callsites).toHaveLength(2);
+    expect(canvasRight.callsites).toHaveLength(2);
+    expect(canvasLeft.callsites[0]).not.toEqual(canvasRight.callsites[0]);
+    expect(canvasLeft.callsites[1]).toEqual(canvasRight.callsites[1]);
   });
 
   test('undo and redo step through an inspector edit', async ({ page, request }) => {

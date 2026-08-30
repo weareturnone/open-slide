@@ -34,6 +34,67 @@ describe('injectLocTags', () => {
     expect(out).toMatch(/<div data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}">hello<\/div>/);
   });
 
+  it('adds a content-relative source module when one is supplied', () => {
+    const src = ['export default [() => (', '  <div>hello</div>', ')];', ''].join('\n');
+    const out = injectLocTags(src, 'slides/cover/index.tsx');
+    if (out === null) throw new Error('expected transform');
+    expect(out).toMatch(
+      /<div data-slide-loc="2:2" data-slide-target="[0-9a-f]{16}" data-slide-source="slides\/cover\/index.tsx">hello<\/div>/,
+    );
+  });
+
+  it('tags separate component callsites without using render order', () => {
+    const src = [
+      'const Shared = () => <span>shared</span>;',
+      'const Page = () => (',
+      '  <div>',
+      '    <Shared />',
+      '    <Shared />',
+      '  </div>',
+      ');',
+      'export default [Page];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src, 'slides/repeated/index.tsx');
+    if (out === null) throw new Error('expected transform');
+    const callsites = Array.from(out.matchAll(/<Shared[^>]*data-slide-callsite="([^"]+)"/g)).map(
+      (match) => match[1],
+    );
+    expect(callsites).toEqual(['slides/repeated/index.tsx#4:4', 'slides/repeated/index.tsx#5:4']);
+  });
+
+  it('records every level of a nested component call path', () => {
+    const src = [
+      'const Leaf = () => <span>leaf</span>;',
+      'const Middle = () => <Leaf />;',
+      'const Page = () => <Middle />;',
+      'export default [Page];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src, 'slides/nested/components.tsx');
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('<Leaf data-slide-callsite="slides/nested/components.tsx#2:21" />');
+    expect(out).toContain('<Middle data-slide-callsite="slides/nested/components.tsx#3:19" />');
+  });
+
+  it('preserves authored ids and explicit provenance attributes', () => {
+    const src = [
+      'const Card = () => <div />;',
+      'export default [() => (',
+      '  <main id="page-root" data-slide-source="authored/module.tsx">',
+      '    <Card data-slide-callsite="authored-callsite" />',
+      '  </main>',
+      ')];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src, 'slides/explicit/index.tsx');
+    if (out === null) throw new Error('expected transform');
+    expect(out).toContain('id="page-root" data-slide-source="authored/module.tsx"');
+    expect(out).toContain('<Card data-slide-callsite="authored-callsite" />');
+    expect(out.match(/data-slide-source="authored\/module.tsx"/g)).toHaveLength(1);
+    expect(out.match(/data-slide-callsite="authored-callsite"/g)).toHaveLength(1);
+  });
+
   it('skips capitalized component invocations', () => {
     const src = ['export default [() => (', '  <MyComp>hi</MyComp>', ')];', ''].join('\n');
     const out = injectLocTags(src);
@@ -360,6 +421,32 @@ describe('locTagsPlugin', () => {
     expectTaggedTransform('/repo/slides/cover/components/Card.tsx');
   });
 
+  it('uses a checkout-independent module id for slide source', () => {
+    const out = transformWithLocTags('/repo/slides/cover/components/Card.tsx');
+    if (out === null) throw new Error('expected tagged transform result');
+    expect(out.code).toContain('data-slide-source="slides/cover/components/Card.tsx"');
+  });
+
+  it('uses the documents namespace for document source', () => {
+    const resolveSpy = vi.spyOn(path, 'resolve').mockImplementation((_cwd, dir) => {
+      return dir === 'documents' ? '/repo/documents' : '/repo/slides';
+    });
+    try {
+      const plugin = locTagsPlugin({ userCwd: '/repo' });
+      const transform = plugin.transform;
+      if (typeof transform !== 'function') throw new Error('expected transform function');
+      const out = transform.call(
+        {} as never,
+        pluginTransformSource,
+        '/repo/documents/report/index.tsx',
+      ) as LocTagsTransformResult;
+      if (out === null) throw new Error('expected tagged transform result');
+      expect(out.code).toContain('data-slide-source="documents/report/index.tsx"');
+    } finally {
+      resolveSpy.mockRestore();
+    }
+  });
+
   it('skips tsx files directly under the slides directory', () => {
     expect(transformWithLocTags('/repo/slides/index.tsx')).toBeNull();
   });
@@ -397,7 +484,12 @@ describe('locTagsPlugin on Windows-style paths', () => {
   });
 
   it('strips HMR ?t= query before matching', () => {
-    expectTagged('C:\\repo\\slides', 'C:/repo/slides/cover/index.tsx?t=1700000000000');
+    const out = transformWithMockedResolve(
+      'C:\\repo\\slides',
+      'C:/repo/slides/cover/index.tsx?t=1700000000000',
+    );
+    if (out === null) throw new Error('expected tagged transform result');
+    expect(out.code).toContain('data-slide-source="slides/cover/index.tsx"');
   });
 
   it('tags nested slide source files under a Windows slidesRoot', () => {

@@ -37,6 +37,14 @@ const SharedCropImage = ({ src, alt, style, ...imageProps }: SharedCropImageProp
   />
 );
 
+const NestedProvenanceLeaf = ({ label }: { label: string }) => (
+  <span data-provenance-label={label}>{label}</span>
+);
+
+const NestedProvenanceCard = ({ label }: { label: string }) => (
+  <NestedProvenanceLeaf label={label} />
+);
+
 const Only: Page = () => (
   <div style={fill}>
     <h1 style={{ fontSize: 96, margin: 0 }}>Editable headline</h1>
@@ -49,6 +57,10 @@ const Only: Page = () => (
     <div style={{ display: 'flex', gap: 24 }}>
       <SharedCropImage src={cropImage} alt="Shared crop landscape" />
       <SharedCropImage src={portraitCropImage} alt="Shared crop portrait" />
+    </div>
+    <div style={{ display: 'flex', gap: 24, fontSize: 24 }}>
+      <NestedProvenanceCard label="Nested provenance left" />
+      <NestedProvenanceCard label="Nested provenance right" />
     </div>
   </div>
 );

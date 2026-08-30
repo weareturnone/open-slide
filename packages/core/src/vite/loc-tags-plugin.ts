@@ -180,7 +180,19 @@ function hasAttribute(opening: t.JSXOpeningElement, name: string): boolean {
   );
 }
 
-export function injectLocTags(code: string): string | null {
+function jsxAttributeValue(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function isComponentJsxName(name: t.JSXOpeningElement['name']): boolean {
+  return t.isJSXMemberExpression(name) || (t.isJSXIdentifier(name) && /^[A-Z]/.test(name.name));
+}
+
+export function injectLocTags(code: string, sourceModule?: string): string | null {
   const ast = tryParse(code);
   if (!ast) return null;
 
@@ -190,15 +202,23 @@ export function injectLocTags(code: string): string | null {
     if (!t.isJSXElement(node) || !node.loc) return;
     const opening = node.openingElement;
     const name = opening.name;
-    if (!isTaggableJsxName(name, forwardingComponents)) return;
     const attributes: string[] = [];
-    if (!hasAttribute(opening, 'data-slide-loc')) {
-      attributes.push(`data-slide-loc="${node.loc.start.line}:${node.loc.start.column}"`);
+    if (isTaggableJsxName(name, forwardingComponents)) {
+      if (!hasAttribute(opening, 'data-slide-loc')) {
+        attributes.push(`data-slide-loc="${node.loc.start.line}:${node.loc.start.column}"`);
+      }
+      if (!hasAttribute(opening, 'data-slide-target')) {
+        attributes.push(
+          `data-slide-target="${targetFingerprint(code, node.start ?? 0, node.end ?? 0)}"`,
+        );
+      }
+      if (sourceModule && !hasAttribute(opening, 'data-slide-source')) {
+        attributes.push(`data-slide-source="${jsxAttributeValue(sourceModule)}"`);
+      }
     }
-    if (!hasAttribute(opening, 'data-slide-target')) {
-      attributes.push(
-        `data-slide-target="${targetFingerprint(code, node.start ?? 0, node.end ?? 0)}"`,
-      );
+    if (sourceModule && isComponentJsxName(name) && !hasAttribute(opening, 'data-slide-callsite')) {
+      const callsite = `${sourceModule}#${node.loc.start.line}:${node.loc.start.column}`;
+      attributes.push(`data-slide-callsite="${jsxAttributeValue(callsite)}"`);
     }
     if (attributes.length === 0) return;
     insertions.push({
@@ -226,13 +246,18 @@ export type LocTagsPluginOptions = {
 // plugins or virtual modules can pass through Windows-style paths.
 // Compare both sides in POSIX shape so the match doesn't depend on
 // which separator the caller happened to use.
-function isSlideSourceFile(id: string, slidesRootPosix: string): boolean {
+function sourceModuleForFile(
+  id: string,
+  contentRootPosix: string,
+  namespace: 'slides' | 'documents',
+): string | null {
   const filePath = id.split(/[?#]/)[0].replace(/\\/g, '/');
-  if (!filePath.startsWith(`${slidesRootPosix}/`)) return false;
-  if (!filePath.endsWith('.tsx')) return false;
-  if (filePath.endsWith('.d.ts') || filePath.endsWith('.test.tsx')) return false;
-  const rel = filePath.slice(slidesRootPosix.length + 1);
-  return rel.includes('/');
+  if (!filePath.startsWith(`${contentRootPosix}/`)) return null;
+  if (!filePath.endsWith('.tsx')) return null;
+  if (filePath.endsWith('.d.ts') || filePath.endsWith('.test.tsx')) return null;
+  const rel = filePath.slice(contentRootPosix.length + 1);
+  if (!rel.includes('/')) return null;
+  return `${namespace}/${rel}`;
 }
 
 export function locTagsPlugin(opts: LocTagsPluginOptions): Plugin {
@@ -246,8 +271,11 @@ export function locTagsPlugin(opts: LocTagsPluginOptions): Plugin {
     // sees our injected attributes.
     enforce: 'pre',
     transform(code, id) {
-      if (!isSlideSourceFile(id, slidesRoot) && !isSlideSourceFile(id, documentsRoot)) return null;
-      const next = injectLocTags(code);
+      const sourceModule =
+        sourceModuleForFile(id, slidesRoot, 'slides') ??
+        sourceModuleForFile(id, documentsRoot, 'documents');
+      if (!sourceModule) return null;
+      const next = injectLocTags(code, sourceModule);
       if (next === null) return null;
       return { code: next, map: null };
     },
