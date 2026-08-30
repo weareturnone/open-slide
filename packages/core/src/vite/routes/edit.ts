@@ -3,7 +3,13 @@ import type { ViteDevServer } from 'vite';
 import { applyEdit, applyEditBatch, type EditOp } from '../../editing/edit-ops.ts';
 import { applyRevertAsset } from '../../editing/revert-asset.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
-import { type ApiContext, json, readBody, resolveContentEntryPath } from './context.ts';
+import {
+  type ApiContext,
+  json,
+  readBody,
+  readSlideSource,
+  resolveContentEntryPath,
+} from './context.ts';
 
 // POST /__edit                applyEdit({ slideId, line, column, ops })
 // POST /__edit/revert-asset   applyRevertAsset({ slideId, assetPath })
@@ -41,12 +47,8 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
         if (!body.line || body.line < 1) return json(res, 400, { error: 'invalid line' });
         if (!Array.isArray(body.ops)) return json(res, 400, { error: 'missing ops' });
 
-        let source: string;
-        try {
-          source = await fs.readFile(file, 'utf8');
-        } catch {
-          return json(res, 404, { error: 'slide not found' });
-        }
+        const source = await readSlideSource(file);
+        if (source === null) return json(res, 404, { error: 'slide not found' });
 
         const result = applyEdit(source, body.line, body.column ?? 0, body.ops, body.strict);
         if (!result.ok) return json(res, result.status, { error: result.error });
@@ -72,12 +74,8 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
           return json(res, 400, { error: 'asset path must start with ./assets/ or @assets/' });
         }
 
-        let source: string;
-        try {
-          source = await fs.readFile(file, 'utf8');
-        } catch {
-          return json(res, 404, { error: 'slide not found' });
-        }
+        const source = await readSlideSource(file);
+        if (source === null) return json(res, 404, { error: 'slide not found' });
 
         const result = applyRevertAsset(source, assetPath);
         if (!result.ok) return json(res, result.status, { error: result.error });
@@ -96,12 +94,8 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
         if (!file) return json(res, 400, { error: 'invalid slideId' });
         if (!Array.isArray(body.edits)) return json(res, 400, { error: 'missing edits' });
 
-        let source: string;
-        try {
-          source = await fs.readFile(file, 'utf8');
-        } catch {
-          return json(res, 404, { error: 'slide not found' });
-        }
+        const source = await readSlideSource(file);
+        if (source === null) return json(res, 404, { error: 'slide not found' });
 
         const edits = body.edits.map((edit) => ({
           line: edit.line ?? 0,

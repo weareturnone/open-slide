@@ -60,6 +60,7 @@ import {
   type AssetEntry,
   type AssetUsage,
   fetchSvgAsFile,
+  GLOBAL_ASSET_SCOPE,
   listAssetUsages,
   renamedCopy,
   revertAssetUsage,
@@ -68,16 +69,16 @@ import {
   useAssets,
 } from '@/lib/assets';
 import { authoringWritable } from '@/lib/authoring';
+import { dragHasFiles } from '@/lib/dom';
 import type { ContentKind } from '@/lib/sdk';
 import { format, useLocale } from '@/lib/use-locale';
-import { cn } from '@/lib/utils';
+import { cn, pad2 } from '@/lib/utils';
 
 type Props = { slideId: string | null; kind?: ContentKind };
 
 type Scope = 'slide' | 'global';
 type ViewMode = 'grid' | 'list';
 
-const GLOBAL_SLIDE_ID = '@global';
 const VIEW_MODE_STORAGE_KEY = 'open-slide:asset-view-mode';
 const SORT_STORAGE_KEY = 'open-slide:asset-sort-v1';
 const GRID_COLUMNS_STORAGE_KEY = 'open-slide:asset-grid-columns-v1';
@@ -166,7 +167,7 @@ type ConflictState = {
 export function AssetView({ slideId, kind = 'slide' }: Props) {
   const lockedToGlobal = slideId === null;
   const [scope, setScope] = useState<Scope>(lockedToGlobal ? 'global' : 'slide');
-  const effectiveSlideId = scope === 'global' || slideId === null ? GLOBAL_SLIDE_ID : slideId;
+  const effectiveSlideId = scope === 'global' || slideId === null ? GLOBAL_ASSET_SCOPE : slideId;
   const { assets, loading, available, upload, rename, remove } = useAssets(effectiveSlideId, kind);
   const [dragActive, setDragActive] = useState(false);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
@@ -300,13 +301,13 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
       aria-label={t.asset.sectionAria}
       className={cn('relative flex h-full flex-col bg-background')}
       onDragEnter={(e) => {
-        if (!authoringWritable || !hasFiles(e)) return;
+        if (!authoringWritable || !dragHasFiles(e)) return;
         e.preventDefault();
         dragDepth.current += 1;
         setDragActive(true);
       }}
       onDragOver={(e) => {
-        if (!authoringWritable || !hasFiles(e)) return;
+        if (!authoringWritable || !dragHasFiles(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
       }}
@@ -315,7 +316,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
         if (dragDepth.current === 0) setDragActive(false);
       }}
       onDrop={(e) => {
-        if (!authoringWritable || !hasFiles(e)) return;
+        if (!authoringWritable || !dragHasFiles(e)) return;
         e.preventDefault();
         dragDepth.current = 0;
         setDragActive(false);
@@ -345,7 +346,7 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
                 <span className="mx-2 opacity-50">·</span>
                 <span className="folio">
                   {format(assets.length === 1 ? t.asset.fileCount.one : t.asset.fileCount.other, {
-                    count: assets.length.toString().padStart(2, '0'),
+                    count: pad2(assets.length),
                   })}
                 </span>
               </>
@@ -727,15 +728,6 @@ function GridColumnsControl({
       </output>
     </fieldset>
   );
-}
-
-function hasFiles(e: React.DragEvent): boolean {
-  const types = e.dataTransfer?.types;
-  if (!types) return false;
-  for (let i = 0; i < types.length; i++) {
-    if (types[i] === 'Files') return true;
-  }
-  return false;
 }
 
 function AssetSortControl({

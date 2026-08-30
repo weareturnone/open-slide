@@ -44,5 +44,5 @@ export function useSlideModule(slideId: string, kind: ContentKind = 'slide') {
     };
   }, [kind, slideId, reload]);
 
-  return { slide, error, reload };
+  return { slide, error };
 }

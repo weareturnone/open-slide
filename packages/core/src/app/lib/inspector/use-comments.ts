@@ -76,5 +76,5 @@ export function useComments(slideId: string, enabled = true) {
     };
   }, [refetch, enabled]);
 
-  return { comments, error, refetch, add, remove };
+  return { comments, error, add, remove };
 }

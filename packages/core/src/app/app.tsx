@@ -19,7 +19,7 @@ export function App() {
             opens, moving along a toolbar shows the rest instantly. */}
         <TooltipProvider delay={200}>
           <Routes>
-            {config.build.showSlideBrowser ? (
+            {config.build.showSlideBrowser && (
               <Route element={<HomeShell />}>
                 <Route path="/" element={<Home />} />
                 <Route path="/documents" element={<Home kind="document" />} />
@@ -27,8 +27,6 @@ export function App() {
                 <Route path="/themes/:themeId" element={<ThemeDetailPage />} />
                 <Route path="/assets" element={<AssetsPage />} />
               </Route>
-            ) : (
-              <Route path="/" element={<NotFound />} />
             )}
             <Route path="/s/:slideId" element={<Slide />} />
             <Route path="/d/:slideId" element={<Slide kind="document" />} />

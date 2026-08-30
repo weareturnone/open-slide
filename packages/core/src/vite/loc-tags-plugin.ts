@@ -1,8 +1,7 @@
 import path from 'node:path';
-import { parse as babelParse } from '@babel/parser';
 import * as t from '@babel/types';
 import type { Plugin } from 'vite';
-import { walkAll, walkJsx } from '../editing/babel-walk.ts';
+import { tryParse, walkAll, walkJsx } from '../editing/babel-walk.ts';
 import { targetFingerprint } from '../editing/target-fingerprint.ts';
 
 // Inject `data-slide-loc="<line>:<col>"` onto every host JSX element in
@@ -182,16 +181,8 @@ function hasAttribute(opening: t.JSXOpeningElement, name: string): boolean {
 }
 
 export function injectLocTags(code: string): string | null {
-  let ast: t.File;
-  try {
-    ast = babelParse(code, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      errorRecovery: true,
-    });
-  } catch {
-    return null;
-  }
+  const ast = tryParse(code);
+  if (!ast) return null;
 
   const forwardingComponents = collectForwardingComponents(ast);
   const insertions: { offset: number; text: string }[] = [];

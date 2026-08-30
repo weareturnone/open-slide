@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { useHistory } from '@/components/history-provider';
-import { type DesignSystem, defaultDesign, designToCssVars } from '../../lib/design';
+import { type DesignSystem, designToCssVars } from '../../lib/design';
 import { shuffleDesign } from '../../lib/design-presets';
 import type { ContentKind } from '../../lib/sdk';
 import { useDesign as useDesignFetch } from './use-design';
@@ -27,7 +27,6 @@ type DesignCtx = {
   update: (mut: (next: DesignSystem) => void, coalesceKey?: string) => void;
   commit: () => Promise<void>;
   discard: () => void;
-  resetToDefaults: () => void;
   shuffle: () => void;
 };
 
@@ -113,17 +112,6 @@ export function DesignProvider({
     history.clear();
   }, [design, history]);
 
-  const resetToDefaults = useCallback(() => {
-    const prev = draftRef.current;
-    const next = clone(defaultDesign);
-    setDraft(next);
-    history.record({
-      coalesceKey: 'design:reset',
-      undo: () => setDraft(prev),
-      redo: () => setDraft(next),
-    });
-  }, [history]);
-
   const shuffle = useCallback(() => {
     const prev = draftRef.current;
     const next = clone(shuffleDesign(prev));
@@ -156,7 +144,6 @@ export function DesignProvider({
     update,
     commit,
     discard,
-    resetToDefaults,
     shuffle,
   };
 

@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { designToCssVars } from './design';
+import { downloadBlob, nextFrame } from './dom';
 import { SlidePageProvider } from './page-context';
 import { canvasSizeFor, type SlideModule } from './sdk';
 
@@ -101,8 +102,8 @@ async function renderPagesToHtml(
       root.render(
         createElement(SlidePageProvider, { index: i, total: pages.length }, createElement(Page)),
       );
-      await nextPaint();
-      await nextPaint();
+      await nextFrame();
+      await nextFrame();
       for (const video of host.querySelectorAll('video')) {
         video.defaultMuted = video.muted;
       }
@@ -114,10 +115,6 @@ async function renderPagesToHtml(
     container.remove();
   }
   return result;
-}
-
-function nextPaint(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function collectCss(): string {
@@ -333,16 +330,4 @@ function escapeHtml(s: string): string {
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

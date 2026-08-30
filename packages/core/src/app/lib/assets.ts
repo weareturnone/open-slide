@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { authoringEnabled, authoringWritable, notifyAuthoringChanged } from './authoring';
 import type { ContentKind } from './sdk';
+import { changedContentIds } from './slides';
+
+export const GLOBAL_ASSET_SCOPE = '@global';
 
 export type AssetEntry = {
   name: string;
@@ -236,20 +239,9 @@ export function useAssets(slideId: string, kind: ContentKind = 'slide'): UseAsse
         refresh().catch(() => {});
       }
     };
-    const slideHandler = (
-      data:
-        | {
-            slideId?: unknown;
-            slideIds?: unknown;
-            documentId?: unknown;
-            documentIds?: unknown;
-          }
-        | undefined,
-    ) => {
-      const ids = kind === 'document' ? data?.documentIds : data?.slideIds;
-      const id = kind === 'document' ? data?.documentId : data?.slideId;
-      const changedIds = Array.isArray(ids) ? ids : typeof id === 'string' ? [id] : [];
-      if (slideId === '@global' ? changedIds.length > 0 : changedIds.includes(slideId)) {
+    const slideHandler = (data: unknown) => {
+      const changedIds = changedContentIds(data, kind);
+      if (slideId === GLOBAL_ASSET_SCOPE ? changedIds.length > 0 : changedIds.includes(slideId)) {
         refresh().catch(() => {});
       }
     };
