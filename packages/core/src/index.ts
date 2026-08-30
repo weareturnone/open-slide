@@ -19,5 +19,11 @@ export type {
   SlideTransition,
   TransitionPhase,
 } from './app/lib/transition.ts';
-export type { OpenSlideConfig } from './config.ts';
+export type {
+  OpenSlideBrandingColors,
+  OpenSlideBrandingConfig,
+  OpenSlideBrandingFonts,
+  OpenSlideBrandingIcon,
+  OpenSlideConfig,
+} from './config.ts';
 export type { Locale, Plural } from './locale/types.ts';

@@ -6,12 +6,42 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-heading: "Geist Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-sans: var(
+    --open-slide-font-body,
+    "Geist Variable",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif
+  );
+  --font-heading: var(
+    --open-slide-font-heading,
+    "Geist Variable",
+    -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    sans-serif
+  );
+  --font-metadata: var(
+    --open-slide-font-metadata,
+    ui-monospace,
+    "JetBrains Mono",
+    "SF Mono",
+    "Menlo",
+    "Cascadia Code",
+    monospace
+  );
   --font-serif:
     ui-serif, "New York", "Iowan Old Style", "Apple Garamond", "Big Caslon", "Charter", Georgia,
     serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", "Cascadia Code", monospace;
+  --font-mono: var(
+    --open-slide-font-metadata,
+    ui-monospace,
+    "JetBrains Mono",
+    "SF Mono",
+    "Menlo",
+    "Cascadia Code",
+    monospace
+  );
 
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
@@ -186,13 +216,13 @@
    * label across the app. Tracked-out small caps in muted ink.
    */
   .eyebrow {
-    @apply font-sans text-[11px] font-medium uppercase text-muted-foreground;
+    @apply font-metadata text-[11px] font-medium uppercase text-muted-foreground;
     letter-spacing: 0.08em;
   }
 
   /* Numeric folio-style page count. */
   .folio {
-    @apply nums font-mono text-[10.5px] tracking-[0.08em] text-muted-foreground;
+    @apply nums font-metadata text-[10.5px] tracking-[0.08em] text-muted-foreground;
   }
 }
 

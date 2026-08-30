@@ -30,6 +30,58 @@ export type OpenSlideAuthoringConfig = {
   };
 };
 
+export type OpenSlideBrandingIcon = {
+  rel: 'icon' | 'shortcut icon' | 'apple-touch-icon' | 'mask-icon';
+  href: string;
+  type?: string;
+  sizes?: string;
+  color?: string;
+};
+
+export type OpenSlideBrandingFonts = {
+  /** CSS font-family stack used for application copy and controls. */
+  body?: string;
+  /** CSS font-family stack used for application headings. */
+  heading?: string;
+  /** CSS font-family stack used for labels, metadata, and numeric UI. */
+  metadata?: string;
+};
+
+export type OpenSlideBrandingColors = {
+  brand?: string;
+  brandForeground?: string;
+  brandSoft?: string;
+  ring?: string;
+};
+
+export type OpenSlideBrandingConfig = {
+  /** Product name shown in application chrome and platform metadata. */
+  appName?: string;
+  /** Browser title. Falls back to appName. */
+  title?: string;
+  description?: string;
+  /** Optional square mark shown beside appName. */
+  logo?: {
+    src: string;
+    alt?: string;
+  };
+  themeColor?:
+    | string
+    | {
+        light: string;
+        dark?: string;
+      };
+  icons?: OpenSlideBrandingIcon[];
+  manifest?: string;
+  /** External or public-root stylesheets, such as licensed local font declarations. */
+  stylesheets?: string[];
+  fonts?: OpenSlideBrandingFonts;
+  colors?: {
+    light?: OpenSlideBrandingColors;
+    dark?: OpenSlideBrandingColors;
+  };
+};
+
 export type OpenSlideConfig = {
   base?: string;
   slidesDir?: string;
@@ -46,4 +98,5 @@ export type OpenSlideConfig = {
   locale?: Locale;
   build?: OpenSlideBuildConfig;
   authoring?: OpenSlideAuthoringConfig;
+  branding?: OpenSlideBrandingConfig;
 };

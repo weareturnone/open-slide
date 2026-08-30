@@ -73,6 +73,7 @@ export async function createViteConfig(opts: CreateViteConfigOptions): Promise<I
   return {
     base: config.base ?? '/',
     root: APP_ROOT,
+    publicDir: path.resolve(userCwd, 'public'),
     configFile: false,
     envDir: userCwd,
     plugins: [

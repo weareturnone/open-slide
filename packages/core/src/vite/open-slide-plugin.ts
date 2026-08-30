@@ -6,6 +6,7 @@ import { loadConfigFromFile, normalizePath, type Plugin, type ViteDevServer } fr
 import type { OpenSlideConfig } from '../config.ts';
 import { SLIDE_ID_RE } from '../editing/slide-ops.ts';
 import { foldersManifestPath, readManifest } from '../files/folders.ts';
+import { generateBrandingCss, resolveBrandingUrls, transformBrandingHtml } from './branding.ts';
 import { hasRecentWrite } from './recent-writes.ts';
 
 export type { OpenSlideConfig };
@@ -21,6 +22,7 @@ const CONFIG_FILE = 'open-slide.config.ts';
 const SLIDES_VMOD = 'virtual:open-slide/slides';
 const CONFIG_VMOD = 'virtual:open-slide/config';
 const FOLDERS_VMOD = 'virtual:open-slide/folders';
+const BRANDING_CSS_VMOD = 'virtual:open-slide/branding.css';
 
 function resolved(id: string): string {
   return `\0${id}`;
@@ -263,6 +265,7 @@ export function openSlidePlugin(opts: OpenSlidePluginOptions): Plugin {
       if (id === SLIDES_VMOD) return resolved(SLIDES_VMOD);
       if (id === CONFIG_VMOD) return resolved(CONFIG_VMOD);
       if (id === FOLDERS_VMOD) return resolved(FOLDERS_VMOD);
+      if (id === BRANDING_CSS_VMOD) return resolved(BRANDING_CSS_VMOD);
       return null;
     },
     async load(id) {
@@ -294,14 +297,31 @@ export function openSlidePlugin(opts: OpenSlidePluginOptions): Plugin {
               showSlideUi: userBuild.showSlideUi ?? true,
               allowHtmlDownload: userBuild.allowHtmlDownload ?? true,
             };
-        const resolvedConfig = { ...config, build: buildResolved, version: coreVersion };
+        const resolvedConfig = {
+          ...config,
+          ...(config.branding
+            ? { branding: resolveBrandingUrls(config.branding, config.base) }
+            : {}),
+          build: buildResolved,
+          version: coreVersion,
+        };
         return `export default ${JSON.stringify(resolvedConfig)};\n`;
       }
       if (id === resolved(FOLDERS_VMOD)) {
         const manifest = await readManifest(manifestPath);
         return `export default ${JSON.stringify(manifest)};\n`;
       }
+      if (id === resolved(BRANDING_CSS_VMOD)) {
+        return generateBrandingCss(config.branding);
+      }
       return null;
+    },
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        if (!config.branding) return html;
+        return transformBrandingHtml(html, config.branding, config.base);
+      },
     },
     handleHotUpdate(ctx) {
       const content = contentIdForEntry(ctx.file);

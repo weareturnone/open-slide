@@ -10,6 +10,7 @@ declare module 'virtual:open-slide/slides' {
 }
 
 declare module 'virtual:open-slide/config' {
+  import type { OpenSlideBrandingConfig } from '../config';
   import type { Locale } from '../locale/types';
 
   const config: {
@@ -18,6 +19,7 @@ declare module 'virtual:open-slide/config' {
     documentsDir?: string;
     port?: number;
     locale?: Locale;
+    branding?: OpenSlideBrandingConfig;
     version: string;
     authoring?: {
       enabled?: boolean;
@@ -42,6 +44,8 @@ declare module 'virtual:open-slide/config' {
   };
   export default config;
 }
+
+declare module 'virtual:open-slide/branding.css' {}
 
 declare module 'virtual:open-slide/folders' {
   import type { FoldersManifest } from './lib/sdk';
