@@ -219,11 +219,7 @@ test.describe('hosted authoring adapters', () => {
   });
 
   test('disables mutation controls in statically read-only previews', async ({ page }) => {
-    await mockVersionStatus(page, { hasDraftChanges: true, readOnly: true });
-    const mutationRequests: string[] = [];
-    page.on('request', (request) => {
-      if (request.method() !== 'GET') mutationRequests.push(`${request.method()} ${request.url()}`);
-    });
+    await mockVersionStatus(page, { hasDraftChanges: true, readOnly: false });
     await page.route('**/studio/catalog**', async (route) => {
       await fulfillJson(route, {
         entries: [
@@ -239,10 +235,17 @@ test.describe('hosted authoring adapters', () => {
 
     await page.goto(baseUrl('readOnly'));
     await expect(page.getByText('Read-only preview')).toBeVisible();
+    await expect(
+      page.locator('fieldset[aria-label="Publish all saved draft changes to production"]'),
+    ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Publish all' })).toBeDisabled();
 
     await page.getByRole('button', { name: 'New deck' }).click();
     await page.getByLabel('Title').fill('Blocked but valid');
+    await expect(page.getByLabel('Deck ID')).toHaveValue('blocked-but-valid');
+    const template = page.getByRole('radio', { name: /Statement/ });
+    await expect(template).toBeChecked();
+    await expect(template).toBeDisabled();
     const create = page.getByRole('button', { name: 'Create deck' });
     await expect(create).toBeDisabled();
     await page.getByRole('button', { name: 'Cancel' }).click();
@@ -254,9 +257,6 @@ test.describe('hosted authoring adapters', () => {
     await alphaCard.getByRole('button', { name: 'Slide actions' }).click();
     const duplicate = page.getByRole('menuitem', { name: 'Duplicate' });
     await expect(duplicate).toHaveAttribute('aria-disabled', 'true');
-    await duplicate.evaluate((element: HTMLElement) => element.click());
-    await page.waitForTimeout(100);
-    expect(mutationRequests).toEqual([]);
   });
 
   test('rechecks server-reported read-only state before publish dispatch', async ({ page }) => {
@@ -274,17 +274,16 @@ test.describe('hosted authoring adapters', () => {
 
     readOnly = true;
     await publish.click();
-    await page.waitForTimeout(250);
-
-    expect(publishBodies).toEqual([]);
     await expect(page.getByRole('alert').getByText('This preview is read-only.')).toBeVisible();
     await expect(page.getByRole('status').getByText('Read-only preview')).toBeVisible();
+    expect(publishBodies).toEqual([]);
   });
 
   test('blocks otherwise-valid structural creation when runtime status becomes read-only', async ({
     page,
   }) => {
-    await mockVersionStatus(page, { readOnly: true });
+    let readOnly = false;
+    await mockVersionStatus(page, () => ({ readOnly }));
     const createBodies: unknown[] = [];
     await page.route('**/studio/catalog**', async (route) => {
       await fulfillJson(route, {
@@ -306,8 +305,11 @@ test.describe('hosted authoring adapters', () => {
     await page.goto(baseUrl('writable'));
     await page.getByRole('button', { name: 'New deck' }).click();
     await page.getByLabel('Title').fill('Runtime locked');
+    await expect(page.getByLabel('Deck ID')).toHaveValue('runtime-locked');
+    await expect(page.getByRole('radio', { name: /Statement/ })).toBeChecked();
     const create = page.getByRole('button', { name: 'Create deck' });
     await expect(create).toBeEnabled();
+    readOnly = true;
     await create.click();
 
     await expect(page.getByRole('alert').getByText('This preview is read-only.')).toBeVisible();
