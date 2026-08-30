@@ -110,8 +110,15 @@ export async function generateSlidesModule(
     files.map(async (abs) => {
       const id = toId(abs, slidesRoot);
       const importPath = isDev ? `@fs/${normalizePath(abs).replace(/^\/+/, '')}` : abs;
+      const sourceModule = `slides/${normalizePath(path.relative(slidesRoot, abs))}`;
       const meta = await readSlideMeta(abs);
-      return { id, importPath, theme: meta.theme, createdAt: parseCreatedAtMs(meta.createdAt) };
+      return {
+        id,
+        importPath,
+        sourceModule,
+        theme: meta.theme,
+        createdAt: parseCreatedAtMs(meta.createdAt),
+      };
     }),
   );
 
@@ -126,8 +133,9 @@ export async function generateSlidesModule(
     documentFiles.map(async (abs) => {
       const id = toId(abs, documentsRoot);
       const importPath = isDev ? `@fs/${normalizePath(abs).replace(/^\/+/, '')}` : abs;
+      const sourceModule = `documents/${normalizePath(path.relative(documentsRoot, abs))}`;
       const meta = await readSlideMeta(abs);
-      return { id, importPath, createdAt: parseCreatedAtMs(meta.createdAt) };
+      return { id, importPath, sourceModule, createdAt: parseCreatedAtMs(meta.createdAt) };
     }),
   );
   const documentEntries = scannedDocuments.filter((e) => SLIDE_ID_RE.test(e.id));
@@ -149,6 +157,12 @@ export async function generateSlidesModule(
         .filter((entry) => entry.createdAt !== null)
         .map((entry) => [entry.id, entry.createdAt]),
     ),
+  );
+  const sourceModulesJson = JSON.stringify(
+    Object.fromEntries(entries.map((entry) => [entry.id, entry.sourceModule])),
+  );
+  const documentSourceModulesJson = JSON.stringify(
+    Object.fromEntries(documentEntries.map((entry) => [entry.id, entry.sourceModule])),
   );
   const importTokens = JSON.stringify(Object.fromEntries(entries.map((e) => [e.id, 0])));
   const documentImportTokens = JSON.stringify(
@@ -196,6 +210,8 @@ export const documentIds = ${documentIds};
 export const slideThemes = ${themesJson};
 export const slideCreatedAt = ${createdAtJson};
 export const documentCreatedAt = ${documentCreatedAtJson};
+export const slideSourceModules = ${sourceModulesJson};
+export const documentSourceModules = ${documentSourceModulesJson};
 ${devRuntime}
 
 export async function loadSlide(id) {

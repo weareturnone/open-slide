@@ -88,6 +88,14 @@ export function contentRoot(ctx: ApiContext, kind: unknown): string {
   return kind === 'document' ? ctx.documentsRoot : ctx.slidesRoot;
 }
 
+export function contentDir(ctx: ApiContext, kind: unknown): string {
+  return kind === 'document' ? ctx.documentsDir : ctx.slidesDir;
+}
+
+export function contentSourceModule(id: string, kind: unknown): string {
+  return `${kind === 'document' ? 'documents' : 'slides'}/${id}/index.tsx`;
+}
+
 export function resolveContentEntryPath(ctx: ApiContext, id: string, kind: unknown): string | null {
   return resolveSlideEntry(contentRoot(ctx, kind), id);
 }

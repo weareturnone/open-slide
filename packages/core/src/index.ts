@@ -9,7 +9,18 @@ export type {
   DesignTypeScale,
 } from './app/lib/design.ts';
 export { cssVarsToString, defaultDesign, designToCssVars } from './app/lib/design.ts';
-export { useSlidePageNumber } from './app/lib/page-context.tsx';
+export type { AuthoredPage } from './app/lib/page.tsx';
+export { page } from './app/lib/page.tsx';
+export { useSlidePageIdentity, useSlidePageNumber } from './app/lib/page-context.tsx';
+export type { PageId, SourceModuleId, StablePageId } from './app/lib/page-identity.ts';
+export {
+  isPageIdentityError,
+  PageIdentityCollisionError,
+  PageIdentityError,
+  PageIdentityStaleError,
+  PageIdentityUnavailableError,
+  PageIdentityValidationError,
+} from './app/lib/page-identity.ts';
 export type { Page, SlideMeta, SlideModule } from './app/lib/sdk.ts';
 export { CANVAS_HEIGHT, CANVAS_WIDTH } from './app/lib/sdk.ts';
 export type { StepProps, StepsProps } from './app/lib/step-context.tsx';

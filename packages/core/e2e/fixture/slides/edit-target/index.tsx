@@ -1,4 +1,4 @@
-import type { Page, SlideMeta } from '@open-slide/core';
+import { type Page, page, type SlideMeta, useSlidePageIdentity } from '@open-slide/core';
 import type { CSSProperties } from 'react';
 
 export const meta: SlideMeta = {
@@ -37,9 +37,19 @@ const SharedCropImage = ({ src, alt, style, ...imageProps }: SharedCropImageProp
   />
 );
 
-const NestedProvenanceLeaf = ({ label }: { label: string }) => (
-  <span data-provenance-label={label}>{label}</span>
-);
+const NestedProvenanceLeaf = ({ label }: { label: string }) => {
+  const pageIdentity = useSlidePageIdentity();
+  const identityLabel = label.replace('provenance', 'identity');
+  return (
+    <span
+      data-provenance-label={label}
+      data-identity-label={identityLabel}
+      data-page-identity={pageIdentity}
+    >
+      {label}
+    </span>
+  );
+};
 
 const NestedProvenanceCard = ({ label }: { label: string }) => (
   <NestedProvenanceLeaf label={label} />
@@ -65,4 +75,4 @@ const Only: Page = () => (
   </div>
 );
 
-export default [Only] satisfies Page[];
+export default [page('only', Only)] satisfies Page[];

@@ -41,6 +41,7 @@ import { ALL_SLIDES_ID, DRAFT_ID } from '../components/sidebar/sidebar';
 import { SlideCanvas } from '../components/slide-canvas';
 import { authoringEnabled, authoringWritable } from '../lib/authoring';
 import { SlidePageProvider } from '../lib/page-context';
+import { pageIdFor } from '../lib/page-normalization';
 import { type ContentKind, canvasSizeFor, type Folder, type SlideModule } from '../lib/sdk';
 import {
   documentCreatedAt,
@@ -598,7 +599,10 @@ function SlideCard({
             style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}
           >
             {FirstPage ? (
-              <div className="h-full w-full">
+              <div
+                data-slide-page-id={pageIdFor(FirstPage) ?? undefined}
+                className="h-full w-full"
+              >
                 <SlideCanvas
                   flat
                   freezeMotion
@@ -606,7 +610,11 @@ function SlideCard({
                   canvasWidth={canvas.width}
                   canvasHeight={canvas.height}
                 >
-                  <SlidePageProvider index={0} total={slide?.default.length ?? 1}>
+                  <SlidePageProvider
+                    index={0}
+                    total={slide?.default.length ?? 1}
+                    pageId={pageIdFor(FirstPage)}
+                  >
                     <FirstPage />
                   </SlidePageProvider>
                 </SlideCanvas>

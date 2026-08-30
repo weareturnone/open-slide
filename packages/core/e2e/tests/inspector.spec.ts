@@ -274,7 +274,16 @@ test.describe('inspector editing', () => {
   }) => {
     const slideId = 'insp-provenance-roots';
     await openEditable(page, request, slideId);
+    const pageId = `slides/${slideId}/index.tsx#only`;
     const thumbnail = page.getByRole('button', { name: 'Go to page 1' });
+    const canvasLeaf = editorCanvas(page).locator('[data-identity-label="Nested identity left"]');
+
+    await expect(canvasLeaf).toHaveAttribute('data-page-identity', pageId);
+    await expect(editorCanvas(page)).toHaveAttribute('data-slide-page-id', pageId);
+    await expect(thumbnail.locator('[data-slide-page-id]')).toHaveAttribute(
+      'data-slide-page-id',
+      pageId,
+    );
 
     const canvasLeft = await renderedProvenance(
       editorCanvas(page).locator('[data-provenance-label="Nested provenance left"]'),
@@ -299,6 +308,23 @@ test.describe('inspector editing', () => {
     expect(canvasRight.callsites).toHaveLength(2);
     expect(canvasLeft.callsites[0]).not.toEqual(canvasRight.callsites[0]);
     expect(canvasLeft.callsites[1]).toEqual(canvasRight.callsites[1]);
+
+    await page.keyboard.press('o');
+    const overview = page.getByRole('dialog', { name: 'Slide overview' });
+    const overviewLeaf = overview.locator('[data-identity-label="Nested identity left"]');
+    await expect(overviewLeaf).toHaveAttribute('data-page-identity', pageId);
+    const overviewIdentity = await renderedIdentity(overviewLeaf, pageId);
+    expect(overviewIdentity.identity).toBe(canvasLeft.identity);
+    await page.keyboard.press('Escape');
+
+    const presenter = await page.context().newPage();
+    await presenter.goto(`/s/${slideId}/presenter`);
+    const presenterLeaf = presenter.locator('[data-identity-label="Nested identity left"]').first();
+    await expect(presenterLeaf).toBeVisible({ timeout: 20_000 });
+    await expect(presenterLeaf).toHaveAttribute('data-page-identity', pageId);
+    const presenterIdentity = await renderedIdentity(presenterLeaf, pageId);
+    expect(presenterIdentity.identity).toBe(canvasLeft.identity);
+    await presenter.close();
   });
 
   test('undo and redo step through an inspector edit', async ({ page, request }) => {

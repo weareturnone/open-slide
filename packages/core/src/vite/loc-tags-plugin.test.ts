@@ -43,6 +43,34 @@ describe('injectLocTags', () => {
     );
   });
 
+  it('registers source-authored names for unique legacy fallback after minification', () => {
+    const src = [
+      'const Shared = () => <main />;',
+      'const Cover = () => <main />;',
+      'export default [Cover, Shared, Shared];',
+      '',
+    ].join('\n');
+    const out = injectLocTags(src, 'slides/legacy/index.tsx');
+    if (out === null) throw new Error('expected transform');
+
+    expect(out).toContain("Symbol.for('@open-slide/core/legacy-page-names')");
+    expect(out).toContain('register(Cover, "slides/legacy/index.tsx", "Cover")');
+    expect(out.match(/register\(Shared,/g)).toHaveLength(1);
+  });
+
+  it('does not register page() descriptors as legacy entries', () => {
+    const src = [
+      "import { page } from '@open-slide/core';",
+      'const Shared = () => <main />;',
+      "export default [page('first', Shared), page('second', Shared)];",
+      '',
+    ].join('\n');
+    const out = injectLocTags(src, 'slides/authored/index.tsx');
+    if (out === null) throw new Error('expected transform');
+
+    expect(out).not.toContain('legacy-page-names');
+  });
+
   it('tags separate component callsites without using render order', () => {
     const src = [
       'const Shared = () => <span>shared</span>;',

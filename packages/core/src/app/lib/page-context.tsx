@@ -1,8 +1,10 @@
 import { type Context, createContext, type PropsWithChildren, useContext, useMemo } from 'react';
+import { type PageId, PageIdentityUnavailableError } from './page-identity.ts';
 
 type SlidePageContextValue = {
   index: number;
   total: number;
+  pageId: PageId | null;
 };
 
 // Stored on globalThis so dev (src) and published (dist) copies of this module
@@ -21,9 +23,10 @@ const SlidePageContext = g[GLOBAL_KEY];
 export function SlidePageProvider({
   index,
   total,
+  pageId = null,
   children,
-}: PropsWithChildren<{ index: number; total: number }>) {
-  const value = useMemo(() => ({ index, total }), [index, total]);
+}: PropsWithChildren<{ index: number; total: number; pageId?: PageId | null }>) {
+  const value = useMemo(() => ({ index, total, pageId }), [index, total, pageId]);
   return <SlidePageContext.Provider value={value}>{children}</SlidePageContext.Provider>;
 }
 
@@ -35,4 +38,15 @@ export function useSlidePageNumber(): { current: number; total: number } {
     );
   }
   return { current: ctx.index + 1, total: ctx.total };
+}
+
+export function useSlidePageIdentity(): PageId {
+  const ctx = useContext(SlidePageContext);
+  if (!ctx?.pageId) {
+    throw new PageIdentityUnavailableError(
+      undefined,
+      'useSlidePageIdentity requires a normalized page occurrence.',
+    );
+  }
+  return ctx.pageId;
 }

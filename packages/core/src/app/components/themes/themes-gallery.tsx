@@ -2,6 +2,7 @@ import { Palette } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { format, useLocale } from '@/lib/use-locale';
 import { SlidePageProvider } from '../../lib/page-context';
+import { pageIdFor } from '../../lib/page-normalization';
 import { loadThemeDemo, type Theme, type ThemeDemoModule, themes } from '../../lib/themes';
 import { SlideCanvas } from '../slide-canvas';
 
@@ -84,7 +85,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
   return (
     <div className="h-full w-full">
       <SlideCanvas flat freezeMotion design={demo.design}>
-        <SlidePageProvider index={0} total={demo.default.length}>
+        <SlidePageProvider index={0} total={demo.default.length} pageId={pageIdFor(FirstPage)}>
           <FirstPage />
         </SlidePageProvider>
       </SlideCanvas>

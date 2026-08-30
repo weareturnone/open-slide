@@ -5,6 +5,8 @@ declare module 'virtual:open-slide/slides' {
   export const slideThemes: Record<string, string>;
   export const slideCreatedAt: Record<string, number>;
   export const documentCreatedAt: Record<string, number>;
+  export const slideSourceModules: Record<string, string>;
+  export const documentSourceModules: Record<string, string>;
   export function loadSlide(id: string): Promise<SlideModule>;
   export function loadDocument(id: string): Promise<SlideModule>;
 }

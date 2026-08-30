@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { type DesignSystem, designToCssVars } from '../lib/design';
 import { SlidePageProvider } from '../lib/page-context';
+import { pageIdFor } from '../lib/page-normalization';
 import { CANVAS_HEIGHT, CANVAS_WIDTH, type Page } from '../lib/sdk';
 import { type StepController, StepHost } from '../lib/step-context';
 
@@ -169,7 +170,8 @@ export function SlidePreloadLayer({
         if (!PageComponent) return null;
         return (
           <div
-            key={pageIndex}
+            key={pageIdFor(PageComponent) ?? pageIndex}
+            data-slide-page-id={pageIdFor(PageComponent) ?? undefined}
             style={{
               position: 'absolute',
               top: 0,
@@ -178,7 +180,11 @@ export function SlidePreloadLayer({
               height: canvasHeight,
             }}
           >
-            <SlidePageProvider index={pageIndex} total={pages.length}>
+            <SlidePageProvider
+              index={pageIndex}
+              total={pages.length}
+              pageId={pageIdFor(PageComponent)}
+            >
               <StepHost
                 isActivePage={false}
                 entryDirection="backward"

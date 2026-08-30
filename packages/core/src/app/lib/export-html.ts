@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { designToCssVars } from './design';
 import { downloadBlob, nextFrame } from './dom';
 import { SlidePageProvider } from './page-context';
+import { normalizeSlideModule, pageIdFor } from './page-normalization';
 import { canvasSizeFor, type SlideModule } from './sdk';
 
 type AssetEntry = { name: string; bytes: Uint8Array };
@@ -11,7 +12,11 @@ const ASSET_EXT_RE =
   /\.(?:png|jpe?g|gif|svg|webp|avif|mp4|webm|mov|woff2?|ttf|otf|mp3|wav|ogg)(?:\?[^#]*)?(?:#.*)?$/i;
 
 export async function exportSlideAsHtml(slide: SlideModule, slideId: string): Promise<void> {
-  const pages = slide.default ?? [];
+  const normalized = normalizeSlideModule(
+    slide,
+    `${slide.meta?.kind === 'document' ? 'documents' : 'slides'}/${slideId}/index.tsx`,
+  );
+  const pages = normalized.default;
   if (pages.length === 0) return;
   const title = slide.meta?.title ?? slideId;
   const canvas = canvasSizeFor(slide);
@@ -51,6 +56,7 @@ export async function exportSlideAsHtml(slide: SlideModule, slideId: string): Pr
     design: slide.design,
     width: canvas.width,
     height: canvas.height,
+    pageIds: pages.map(pageIdFor),
   });
 
   const htmlBytes = new TextEncoder().encode(html);
@@ -95,12 +101,18 @@ async function renderPagesToHtml(
       const Page = pages[i];
       if (!Page) continue;
       const host = document.createElement('div');
+      const pageId = pageIdFor(Page);
+      if (pageId) host.setAttribute('data-slide-page-id', pageId);
       host.style.width = `${width}px`;
       host.style.height = `${height}px`;
       container.appendChild(host);
       const root = createRoot(host);
       root.render(
-        createElement(SlidePageProvider, { index: i, total: pages.length }, createElement(Page)),
+        createElement(
+          SlidePageProvider,
+          { index: i, total: pages.length, pageId },
+          createElement(Page),
+        ),
       );
       await nextFrame();
       await nextFrame();
@@ -246,10 +258,12 @@ function buildHtml(opts: {
   design: SlideModule['design'];
   width: number;
   height: number;
+  pageIds: Array<string | null>;
 }): string {
   const pagesMarkup = opts.pagesHtml
     .map(
-      (page, i) => `<div class="os-page" data-idx="${i}"${i === 0 ? '' : ' hidden'}>${page}</div>`,
+      (page, i) =>
+        `<div class="os-page" data-idx="${i}"${opts.pageIds[i] ? ` data-slide-page-id="${escapeAttr(opts.pageIds[i] ?? '')}"` : ''}${i === 0 ? '' : ' hidden'}>${page}</div>`,
     )
     .join('');
 

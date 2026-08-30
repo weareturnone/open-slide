@@ -1,6 +1,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse as babelParse } from '@babel/parser';
+import {
+  authoredPageId,
+  nextDuplicatePageId,
+  type PageId,
+  PageIdentityStaleError,
+  PageIdentityUnavailableError,
+  PageIdentityValidationError,
+  type StablePageId,
+  stablePageIdFromLabel,
+  validateStablePageId,
+} from '../app/lib/page-identity.ts';
+import { sourcePageOccurrencesOrThrow } from './page-identities.ts';
 
 export const SLIDE_ID_RE = /^[a-z0-9_-]+$/i;
 
@@ -559,10 +571,20 @@ export function insertPageComponentInSource(
   componentName: string,
   componentSource: string,
   index: number,
+  stablePageId?: string,
 ): string | null {
   if (!/^[A-Z][A-Za-z0-9]{2,79}$/.test(componentName)) return null;
   if (!Number.isInteger(index) || index < 0) return null;
   if (new RegExp(`\\b${componentName}\\b`).test(source)) return null;
+  let authoredId: StablePageId | null = null;
+  if (stablePageId !== undefined) {
+    try {
+      authoredId = validateStablePageId(stablePageId);
+    } catch {
+      return null;
+    }
+  }
+  const pageExpression = authoredId ? `page('${authoredId}', ${componentName})` : componentName;
 
   let templateAst: unknown;
   try {
@@ -589,7 +611,7 @@ export function insertPageComponentInSource(
   const { elements, arrayStart, arrayEnd } = found;
   let next: string;
   if (elements.length === 0) {
-    next = `${source.slice(0, arrayStart)}[${componentName}]${source.slice(arrayEnd)}`;
+    next = `${source.slice(0, arrayStart)}[${pageExpression}]${source.slice(arrayEnd)}`;
   } else {
     const prefix = source.slice(arrayStart, elements[0].start);
     const suffix = source.slice(elements[elements.length - 1].end, arrayEnd);
@@ -598,7 +620,7 @@ export function insertPageComponentInSource(
       separators.push(source.slice(elements[i].end, elements[i + 1].start));
     }
     const values = elements.map((element) => source.slice(element.start, element.end));
-    values.splice(index, 0, componentName);
+    values.splice(index, 0, pageExpression);
     const separator = chooseInsertSeparator(prefix, separators);
     const nextSeparators = separators.slice();
     nextSeparators.splice(Math.min(index, nextSeparators.length), 0, separator);
@@ -623,7 +645,7 @@ export function insertPageComponentInSource(
   } catch {
     return null;
   }
-  return withComponent;
+  return authoredId ? ensurePageValueImportInSource(withComponent) : withComponent;
 }
 
 /**
@@ -636,10 +658,22 @@ export function insertPageComponentInSource(
 export function duplicatePageInDefaultExportInSource(source: string, index: number): string | null {
   const found = findDefaultExportArray(source);
   if (!found) return null;
-  const { elements, arrayStart, arrayEnd } = found;
+  const { elements } = found;
   const n = elements.length;
   if (!Number.isInteger(index) || index < 0 || index >= n) return null;
+  const elementText = elements.map((el) => source.slice(el.start, el.end));
 
+  return duplicatePageElement(source, found, index, elementText[index]);
+}
+
+function duplicatePageElement(
+  source: string,
+  found: NonNullable<ReturnType<typeof findDefaultExportArray>>,
+  index: number,
+  duplicateText: string,
+): string {
+  const { elements, arrayStart, arrayEnd } = found;
+  const n = elements.length;
   const prefix = source.slice(arrayStart, elements[0].start);
   const suffix = source.slice(elements[n - 1].end, arrayEnd);
   const separators: string[] = [];
@@ -655,7 +689,7 @@ export function duplicatePageInDefaultExportInSource(source: string, index: numb
   for (let i = 0; i < n; i++) {
     newElements.push(elementText[i]);
     if (i === index) {
-      newElements.push(elementText[i]);
+      newElements.push(duplicateText);
       newSeparators.push(insertSep);
     }
     if (i < n - 1) newSeparators.push(separators[i]);
@@ -668,4 +702,198 @@ export function duplicatePageInDefaultExportInSource(source: string, index: numb
   rebuilt += suffix;
 
   return source.slice(0, arrayStart) + rebuilt + source.slice(arrayEnd);
+}
+
+function ensurePageValueImportInSource(source: string): string | null {
+  let ast: unknown;
+  try {
+    ast = babelParse(source, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      errorRecovery: false,
+    });
+  } catch {
+    return null;
+  }
+  const body = (ast as { program?: { body?: Array<Record<string, unknown>> } }).program?.body ?? [];
+  let lastImportEnd = -1;
+  for (const statement of body) {
+    if (statement.type === 'ImportDeclaration') {
+      if (typeof statement.end === 'number') lastImportEnd = statement.end;
+      const sourceValue = (statement.source as Record<string, unknown> | undefined)?.value;
+      const declarationKind = statement.importKind;
+      const specifiers = (statement.specifiers as Array<Record<string, unknown>> | undefined) ?? [];
+      for (const specifier of specifiers) {
+        const localName = (specifier.local as Record<string, unknown> | undefined)?.name;
+        if (localName !== 'page') continue;
+        const importedName = (specifier.imported as Record<string, unknown> | undefined)?.name;
+        if (
+          sourceValue === '@open-slide/core' &&
+          specifier.type === 'ImportSpecifier' &&
+          importedName === 'page' &&
+          declarationKind !== 'type' &&
+          specifier.importKind !== 'type'
+        ) {
+          return source;
+        }
+        return null;
+      }
+      continue;
+    }
+
+    if (
+      (statement.type === 'FunctionDeclaration' || statement.type === 'ClassDeclaration') &&
+      (statement.id as Record<string, unknown> | undefined)?.name === 'page'
+    ) {
+      return null;
+    }
+    if (statement.type === 'VariableDeclaration') {
+      const declarations =
+        (statement.declarations as Array<Record<string, unknown>> | undefined) ?? [];
+      if (
+        declarations.some(
+          (declaration) =>
+            (declaration.id as Record<string, unknown> | undefined)?.type === 'Identifier' &&
+            (declaration.id as Record<string, unknown> | undefined)?.name === 'page',
+        )
+      ) {
+        return null;
+      }
+    }
+  }
+
+  const importStatement = "import { page } from '@open-slide/core';";
+  if (lastImportEnd >= 0) {
+    return `${source.slice(0, lastImportEnd)}\n${importStatement}${source.slice(lastImportEnd)}`;
+  }
+  return `${importStatement}\n${source}`;
+}
+
+export function migrateLegacyPageOccurrencesInSource(source: string, sourceModule: string): string {
+  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
+  const legacy = occurrences.filter((occurrence) => !occurrence.authored);
+  if (legacy.length === 0) return source;
+
+  const occupied = new Set(occurrences.map((occurrence) => occurrence.id));
+  const replacements = legacy.map((occurrence) => {
+    const base = stablePageIdFromLabel(occurrence.componentName ?? 'page');
+    let stableId = base as string;
+    let suffix = 2;
+    while (occupied.has(authoredPageId(sourceModule, stableId))) {
+      stableId = `${base}-${suffix++}`;
+    }
+    const validated = validateStablePageId(stableId);
+    occupied.add(authoredPageId(sourceModule, validated));
+    return {
+      start: occurrence.start,
+      end: occurrence.end,
+      text: `page('${validated}', ${source.slice(occurrence.start, occurrence.end)})`,
+    };
+  });
+
+  let migrated = source;
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    migrated =
+      migrated.slice(0, replacement.start) + replacement.text + migrated.slice(replacement.end);
+  }
+  const withImport = ensurePageValueImportInSource(migrated);
+  if (withImport === null) {
+    throw new PageIdentityUnavailableError(
+      sourceModule,
+      'The source already binds "page" to another value.',
+    );
+  }
+  return withImport;
+}
+
+export type PageReorderByIdResult = {
+  source: string;
+  order: number[];
+};
+
+export type PageRemovalByIdResult = {
+  source: string;
+  index: number;
+};
+
+export type PageDuplicationByIdResult = {
+  source: string;
+  sourceIndex: number;
+  index: number;
+  pageId: PageId;
+};
+
+export function reorderDefaultExportPagesByIdInSource(
+  source: string,
+  orderedPageIds: readonly string[],
+  sourceModule: string,
+): PageReorderByIdResult {
+  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
+  if (
+    orderedPageIds.length !== occurrences.length ||
+    new Set(orderedPageIds).size !== occurrences.length
+  ) {
+    throw new PageIdentityValidationError(orderedPageIds.join(','));
+  }
+  const currentIndex = new Map(occurrences.map((occurrence, index) => [occurrence.id, index]));
+  const order = orderedPageIds.map((pageId) => {
+    const index = currentIndex.get(pageId as PageId);
+    if (index === undefined) throw new PageIdentityStaleError(pageId);
+    return index;
+  });
+  const reordered = reorderDefaultExportPagesInSource(source, order);
+  if (reordered === null) {
+    throw new PageIdentityUnavailableError(sourceModule, 'The page array cannot be reordered.');
+  }
+  return { source: reordered, order };
+}
+
+export function removePageByIdInSource(
+  source: string,
+  pageId: string,
+  sourceModule: string,
+): PageRemovalByIdResult {
+  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
+  const index = occurrences.findIndex((occurrence) => occurrence.id === pageId);
+  if (index < 0) throw new PageIdentityStaleError(pageId);
+  const updated = removePageFromDefaultExportInSource(source, index);
+  if (updated === null) {
+    throw new PageIdentityUnavailableError(sourceModule, 'The page cannot be removed.');
+  }
+  return { source: updated, index };
+}
+
+export function duplicatePageByIdInSource(
+  source: string,
+  pageId: string,
+  sourceModule: string,
+): PageDuplicationByIdResult {
+  const occurrences = sourcePageOccurrencesOrThrow(source, sourceModule);
+  const index = occurrences.findIndex((occurrence) => occurrence.id === pageId);
+  if (index < 0) throw new PageIdentityStaleError(pageId);
+  const selected = occurrences[index];
+  const nextIdentity = nextDuplicatePageId(
+    selected.id,
+    occurrences.map((occurrence) => occurrence.id),
+  );
+  const found = findDefaultExportArray(source);
+  if (!found) {
+    throw new PageIdentityUnavailableError(sourceModule, 'The page cannot be duplicated.');
+  }
+
+  let duplicateText: string;
+  if (selected.authored && selected.stableIdStart !== null && selected.stableIdEnd !== null) {
+    duplicateText = `${source.slice(selected.start, selected.stableIdStart)}'${nextIdentity.stableId}'${source.slice(selected.stableIdEnd, selected.end)}`;
+  } else {
+    duplicateText = `page('${nextIdentity.stableId}', ${source.slice(selected.start, selected.end)})`;
+  }
+  const duplicated = duplicatePageElement(source, found, index, duplicateText);
+  const withImport = selected.authored ? duplicated : ensurePageValueImportInSource(duplicated);
+  if (withImport === null) {
+    throw new PageIdentityUnavailableError(
+      sourceModule,
+      'The source already binds "page" to another value.',
+    );
+  }
+  return { source: withImport, sourceIndex: index, index: index + 1, pageId: nextIdentity.pageId };
 }

@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import {
   deleteSlide,
@@ -125,12 +126,84 @@ test.describe('slide viewer', () => {
       await page.getByRole('button', { name: 'Go to page 1' }).click({ button: 'right' });
       await page.getByRole('menuitem', { name: 'Duplicate' }).click();
       await expect(page.getByRole('button', { name: 'Go to page 4' })).toBeVisible();
+      await expect.poll(() => readSlideSource('thumb-ops')).toContain("page('one-copy', One)");
+      await expect(
+        page.getByRole('button', { name: 'Go to page 1' }).locator('[data-slide-page-id]'),
+      ).toHaveAttribute('data-slide-page-id', 'slides/thumb-ops/index.tsx#legacy:One');
+      await expect(
+        page.getByRole('button', { name: 'Go to page 2' }).locator('[data-slide-page-id]'),
+      ).toHaveAttribute('data-slide-page-id', 'slides/thumb-ops/index.tsx#one-copy');
 
       await page.getByRole('button', { name: 'Go to page 4' }).click({ button: 'right' });
       await page.getByRole('menuitem', { name: 'Delete' }).click();
       await expect(page.getByRole('button', { name: 'Go to page 4' })).toHaveCount(0);
     } finally {
       await deleteSlide(request, 'thumb-ops');
+    }
+  });
+
+  test('HTML, PDF, and PPTX export roots keep the authored page id', async ({ page, request }) => {
+    const slideId = 'export-identity';
+    const pageId = `slides/${slideId}/index.tsx#only`;
+    try {
+      await duplicateSlide(request, 'edit-target', slideId);
+      await openSlide(page, slideId);
+
+      const htmlDownload = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download' }).click();
+      await page.getByRole('menuitem', { name: 'Export as HTML' }).click();
+      const htmlPath = await (await htmlDownload).path();
+      expect(htmlPath).not.toBeNull();
+      expect(await fs.readFile(htmlPath as string, 'utf8')).toContain(
+        `data-slide-page-id="${pageId}"`,
+      );
+
+      await page.evaluate(() => {
+        const state = window as typeof window & { __pdfPageIds?: string[] };
+        state.__pdfPageIds = [];
+        window.print = () => {
+          state.__pdfPageIds = Array.from(
+            document.querySelectorAll<HTMLElement>('.os-print-frame[data-slide-page-id]'),
+            (element) => element.dataset.slidePageId ?? '',
+          );
+          window.dispatchEvent(new Event('afterprint'));
+        };
+      });
+      await page.getByRole('button', { name: 'Download' }).click();
+      await page.getByRole('menuitem', { name: 'Export as PDF' }).click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as typeof window & { __pdfPageIds?: string[] }).__pdfPageIds ?? [],
+          ),
+        )
+        .toEqual([pageId]);
+
+      await page.evaluate(() => {
+        const state = window as typeof window & { __pptxPageIds?: string[] };
+        state.__pptxPageIds = [];
+        const observer = new MutationObserver(() => {
+          const ids = Array.from(
+            document.querySelectorAll<HTMLElement>('.os-pptx-capture [data-slide-page-id]'),
+            (element) => element.dataset.slidePageId ?? '',
+          );
+          if (ids.length > 0) state.__pptxPageIds = ids;
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+      const pptxDownload = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download' }).click();
+      await page.getByRole('menuitem', { name: 'Export as image PPTX' }).click();
+      await pptxDownload;
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as typeof window & { __pptxPageIds?: string[] }).__pptxPageIds ?? [],
+          ),
+        )
+        .toEqual([pageId]);
+    } finally {
+      await deleteSlide(request, slideId);
     }
   });
 

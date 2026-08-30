@@ -31,18 +31,3 @@ export function notifyAuthoringChanged(detail?: AuthoringChangedDetail): void {
 export function notifyAuthoringMutation(phase: 'start' | 'finish'): void {
   window.dispatchEvent(new CustomEvent(AUTHORING_MUTATION_EVENT, { detail: { phase } }));
 }
-
-export function pageComponentIdentities(
-  pages: Array<{ name?: string; displayName?: string }>,
-): string[] | null {
-  const occurrences = new Map<string, number>();
-  const identities: string[] = [];
-  for (const page of pages) {
-    const componentName = String(page.displayName || page.name || '').trim();
-    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(componentName)) return null;
-    const occurrence = (occurrences.get(componentName) || 0) + 1;
-    occurrences.set(componentName, occurrence);
-    identities.push(`${componentName}#${occurrence}`);
-  }
-  return identities;
-}

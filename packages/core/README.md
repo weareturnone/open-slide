@@ -55,10 +55,11 @@ The value is passed straight to Vite's `base` and to React Router's `basename`, 
 
 ## Authoring slides
 
-Slides live under `slides/<kebab-case-id>/index.tsx` and default-export an array of `Page` components:
+Slides live under `slides/<kebab-case-id>/index.tsx` and default-export an array of `Page` components.
+Use `page()` to give each authored occurrence a persistent identity:
 
 ```tsx
-import type { Page } from '@open-slide/core';
+import { page, type Page } from '@open-slide/core';
 
 const Cover: Page = () => (
   <div className="flex h-full w-full items-center justify-center">
@@ -66,11 +67,16 @@ const Cover: Page = () => (
   </div>
 );
 
-const pages: Page[] = [Cover];
+const pages: Page[] = [page('cover', Cover)];
 export default pages;
 
 export const meta = { title: 'Hello' };
 ```
+
+Plain arrays such as `[Cover]` remain compatible. A unique named component gets a stable legacy
+fallback. Repeating the same legacy component still renders, but editing and structural writes stop
+with `PageIdentityCollisionError` until each occurrence is wrapped with a unique `page()` ID. See
+[Persistent page occurrence identity](../../docs/page-occurrence-identity.md) for migration details.
 
 ## Exports
 

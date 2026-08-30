@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ContentKind, SlideModule } from './sdk';
+import type { NormalizedSlideModule } from './page-normalization';
+import type { ContentKind } from './sdk';
 import { loadDocument, loadSlide, slideChangeIncludes } from './slides';
 
 export function useSlideModule(slideId: string, kind: ContentKind = 'slide') {
-  const [slide, setSlide] = useState<SlideModule | null>(null);
+  const [slide, setSlide] = useState<NormalizedSlideModule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loadSeqRef = useRef(0);
 

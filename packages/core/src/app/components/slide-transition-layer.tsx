@@ -1,5 +1,6 @@
 import { type MutableRefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SlidePageProvider } from '../lib/page-context';
+import { pageIdFor } from '../lib/page-normalization';
 import type { Page } from '../lib/sdk';
 import {
   type EntryDirection,
@@ -789,8 +790,12 @@ export function SlideTransitionLayer({
       style={{ background: 'var(--osd-bg)' }}
     >
       {OutgoingPage && outgoing !== null ? (
-        <div ref={outgoingLayerRef} className="absolute inset-0">
-          <SlidePageProvider index={outgoing} total={total}>
+        <div
+          ref={outgoingLayerRef}
+          data-slide-page-id={pageIdFor(OutgoingPage) ?? undefined}
+          className="absolute inset-0"
+        >
+          <SlidePageProvider index={outgoing} total={total} pageId={pageIdFor(OutgoingPage)}>
             <StepHost
               isActivePage={false}
               entryDirection={outgoingEntryDirection}
@@ -802,8 +807,12 @@ export function SlideTransitionLayer({
         </div>
       ) : null}
       {CurrentPage ? (
-        <div ref={incomingLayerRef} className="absolute inset-0">
-          <SlidePageProvider index={current} total={total}>
+        <div
+          ref={incomingLayerRef}
+          data-slide-page-id={pageIdFor(CurrentPage) ?? undefined}
+          className="absolute inset-0"
+        >
+          <SlidePageProvider index={current} total={total} pageId={pageIdFor(CurrentPage)}>
             <StepHost
               isActivePage
               entryDirection={entryDirection}

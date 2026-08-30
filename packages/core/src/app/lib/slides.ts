@@ -1,30 +1,37 @@
 import {
   slideCreatedAt as createdAt,
+  documentSourceModules as documentSources,
   documentIds as documents,
   documentCreatedAt as documentsCreatedAt,
   slideIds as ids,
   loadSlide as load,
   loadDocument as loadDoc,
+  slideSourceModules as sources,
   slideThemes as themes,
 } from 'virtual:open-slide/slides';
-import type { SlideModule } from './sdk';
+import { type NormalizedSlideModule, normalizeSlideModule } from './page-normalization';
 
 export const slideIds: string[] = ids;
 export const documentIds: string[] = documents;
 export const slideThemes: Record<string, string> = themes;
 export const slideCreatedAt: Record<string, number> = createdAt;
 export const documentCreatedAt: Record<string, number> = documentsCreatedAt;
+export const slideSourceModules: Record<string, string> = sources;
+export const documentSourceModules: Record<string, string> = documentSources;
 
 export function slidesByTheme(themeId: string): string[] {
   return slideIds.filter((id) => slideThemes[id] === themeId);
 }
 
-export async function loadSlide(id: string): Promise<SlideModule> {
-  return load(id);
+export async function loadSlide(id: string): Promise<NormalizedSlideModule> {
+  return normalizeSlideModule(await load(id), slideSourceModules[id] ?? `slides/${id}/index.tsx`);
 }
 
-export async function loadDocument(id: string): Promise<SlideModule> {
-  return loadDoc(id);
+export async function loadDocument(id: string): Promise<NormalizedSlideModule> {
+  return normalizeSlideModule(
+    await loadDoc(id),
+    documentSourceModules[id] ?? `documents/${id}/index.tsx`,
+  );
 }
 
 export function changedContentIds(data: unknown, kind: 'slide' | 'document' = 'slide'): string[] {

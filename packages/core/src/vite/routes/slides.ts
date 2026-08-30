@@ -1,12 +1,14 @@
 import fs from 'node:fs/promises';
+import type { ServerResponse } from 'node:http';
 import type { ViteDevServer } from 'vite';
+import { isPageIdentityError } from '../../app/lib/page-identity.ts';
 import {
   duplicateNotesElementInSource,
-  duplicatePageInDefaultExportInSource,
+  duplicatePageByIdInSource,
   duplicateSlideDir,
   removeNotesElementInSource,
-  removePageFromDefaultExportInSource,
-  reorderDefaultExportPagesInSource,
+  removePageByIdInSource,
+  reorderDefaultExportPagesByIdInSource,
   reorderNotesArrayInSource,
   rmSlideDir,
   SLIDE_ID_RE,
@@ -18,20 +20,35 @@ import { validateMutationRequest } from '../../http/request-guard.ts';
 import {
   type ApiContext,
   contentRoot,
+  contentSourceModule,
   json,
   readBody,
   resolveContentEntryPath,
 } from './context.ts';
 
-// PUT    /__slides/:id/reorder            reorder pages { order: number[] }
-// DELETE /__slides/:id/pages/:i           remove page
-// POST   /__slides/:id/pages/:i/duplicate duplicate page
+// PUT    /__slides/:id/reorder            reorder pages { pageIds: string[] }
+// DELETE /__slides/:id/pages              remove page { pageId }
+// POST   /__slides/:id/pages/duplicate    duplicate page { pageId }
 // POST   /__slides/:id/duplicate          duplicate slide directory { newId? }
 // PATCH  /__slides/:id                    rename slide (writes meta.title)
 // DELETE /__slides/:id                    delete slide directory + folder assignment
 
 type DuplicateSlideBody = { newId?: unknown };
 type SlidePatchBody = { name?: unknown };
+
+function identityFailure(res: ServerResponse, error: unknown): void {
+  if (!isPageIdentityError(error)) {
+    json(res, 422, { error: String((error as Error).message ?? error) });
+    return;
+  }
+  const status =
+    error.code === 'PAGE_IDENTITY_VALIDATION'
+      ? 400
+      : error.code === 'PAGE_IDENTITY_COLLISION' || error.code === 'PAGE_IDENTITY_STALE'
+        ? 409
+        : 422;
+  json(res, status, { error: error.message, name: error.name, code: error.code });
+}
 
 export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): void {
   server.middlewares.use('/__slides', async (req, res, next) => {
@@ -50,12 +67,12 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
         const slideId = reorderMatch[1];
         if (!SLIDE_ID_RE.test(slideId)) return json(res, 400, { error: 'invalid slideId' });
 
-        const body = (await readBody(req)) as { order?: unknown };
-        if (!Array.isArray(body.order)) return json(res, 400, { error: 'invalid order' });
-        const order: number[] = [];
-        for (const v of body.order) {
-          if (!Number.isInteger(v)) return json(res, 400, { error: 'invalid order' });
-          order.push(v as number);
+        const body = (await readBody(req)) as { pageIds?: unknown };
+        if (
+          !Array.isArray(body.pageIds) ||
+          body.pageIds.some((value) => typeof value !== 'string')
+        ) {
+          return json(res, 400, { error: 'invalid pageIds' });
         }
 
         const entry = resolveContentEntryPath(ctx, slideId, kind);
@@ -68,13 +85,17 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           return json(res, 404, { error: 'slide not found' });
         }
 
-        const reordered = reorderDefaultExportPagesInSource(source, order);
-        if (reordered === null) {
-          return json(res, 422, {
-            error: 'could not reorder pages — order must be a permutation of the existing array',
-          });
+        let reordered: ReturnType<typeof reorderDefaultExportPagesByIdInSource>;
+        try {
+          reordered = reorderDefaultExportPagesByIdInSource(
+            source,
+            body.pageIds as string[],
+            contentSourceModule(slideId, kind),
+          );
+        } catch (error) {
+          return identityFailure(res, error);
         }
-        const withNotes = reorderNotesArrayInSource(reordered, order);
+        const withNotes = reorderNotesArrayInSource(reordered.source, reordered.order);
         if (withNotes === null) {
           return json(res, 422, {
             error: 'could not reorder pages — `notes` export has an unexpected shape',
@@ -83,22 +104,23 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
         if (withNotes !== source) {
           await fs.writeFile(entry, withNotes, 'utf8');
         }
-        return json(res, 200, { ok: true, slideId, order });
+        return json(res, 200, { ok: true, slideId, pageIds: body.pageIds });
       }
 
-      const pageOpMatch = url.pathname.match(/^\/([^/]+)\/pages\/(\d+)(?:\/([a-z]+))?$/);
+      const pageOpMatch = url.pathname.match(/^\/([^/]+)\/pages(?:\/(\d+))?(?:\/([a-z]+))?$/);
       if (pageOpMatch) {
         const slideId = pageOpMatch[1];
-        const pageIndex = Number.parseInt(pageOpMatch[2], 10);
+        const legacyPageIndex =
+          pageOpMatch[2] === undefined ? null : Number.parseInt(pageOpMatch[2], 10);
         const op = pageOpMatch[3];
         if (!SLIDE_ID_RE.test(slideId)) return json(res, 400, { error: 'invalid slideId' });
-        if (!Number.isInteger(pageIndex) || pageIndex < 0)
+        if (legacyPageIndex !== null && (!Number.isInteger(legacyPageIndex) || legacyPageIndex < 0))
           return json(res, 400, { error: 'invalid page index' });
 
         const isDelete = method === 'DELETE' && !op;
         const isDuplicate = method === 'POST' && op === 'duplicate';
         if (!isDelete && !isDuplicate) return next();
-        const requestCheck = validateMutationRequest(req);
+        const requestCheck = validateMutationRequest(req, { requireJsonBody: true });
         if (!requestCheck.ok) {
           return json(res, requestCheck.status, { error: requestCheck.error });
         }
@@ -113,19 +135,24 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
           return json(res, 404, { error: 'slide not found' });
         }
 
-        const updated = isDelete
-          ? removePageFromDefaultExportInSource(source, pageIndex)
-          : duplicatePageInDefaultExportInSource(source, pageIndex);
-        if (updated === null) {
-          return json(res, 422, {
-            error: isDelete
-              ? 'could not delete page — index out of range or default export is not an array'
-              : 'could not duplicate page — index out of range or default export is not an array',
-          });
+        const body = (await readBody(req)) as { pageId?: unknown };
+        if (typeof body.pageId !== 'string') return json(res, 400, { error: 'invalid pageId' });
+        let updated:
+          | ReturnType<typeof removePageByIdInSource>
+          | ReturnType<typeof duplicatePageByIdInSource>;
+        try {
+          updated = isDelete
+            ? removePageByIdInSource(source, body.pageId, contentSourceModule(slideId, kind))
+            : duplicatePageByIdInSource(source, body.pageId, contentSourceModule(slideId, kind));
+        } catch (error) {
+          return identityFailure(res, error);
         }
+        const noteIndex = isDelete
+          ? updated.index
+          : (updated as ReturnType<typeof duplicatePageByIdInSource>).sourceIndex;
         const withNotes = isDelete
-          ? removeNotesElementInSource(updated, pageIndex)
-          : duplicateNotesElementInSource(updated, pageIndex);
+          ? removeNotesElementInSource(updated.source, noteIndex)
+          : duplicateNotesElementInSource(updated.source, noteIndex);
         if (withNotes === null) {
           return json(res, 422, {
             error: isDelete
@@ -136,7 +163,12 @@ export function registerSlideRoutes(server: ViteDevServer, ctx: ApiContext): voi
         if (withNotes !== source) {
           await fs.writeFile(entry, withNotes, 'utf8');
         }
-        return json(res, 200, { ok: true, slideId, index: pageIndex });
+        return json(res, 200, {
+          ok: true,
+          slideId,
+          index: updated.index,
+          pageId: 'pageId' in updated ? updated.pageId : body.pageId,
+        });
       }
 
       const duplicateMatch = url.pathname.match(/^\/([^/]+)\/duplicate$/);

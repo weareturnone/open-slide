@@ -41,6 +41,7 @@ import { format, useLocale } from '@/lib/use-locale';
 import { cn, pad2 } from '@/lib/utils';
 import type { DesignSystem } from '../lib/design';
 import { SlidePageProvider } from '../lib/page-context';
+import { pageIdFor } from '../lib/page-normalization';
 import type { Page } from '../lib/sdk';
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from '../lib/sdk';
 import type { SlideTransition } from '../lib/transition';
@@ -238,7 +239,7 @@ export function ThumbnailRail({
         node
       );
       return (
-        <div key={i} className="group/boundary relative">
+        <div key={pageIdFor(PageComp) ?? i} className="group/boundary relative">
           {thumb}
           {onInsert && i < pages.length - 1 && (
             <button
@@ -550,6 +551,7 @@ function HorizontalVirtualThumbList({
           {pad2(i + 1)}
         </span>
         <div
+          data-slide-page-id={pageIdFor(PageComp) ?? undefined}
           className={cn(
             'relative shrink-0 overflow-hidden rounded-[4px] border bg-card motion-safe:transition-[border-color,box-shadow]',
             active
@@ -567,7 +569,7 @@ function HorizontalVirtualThumbList({
             canvasWidth={canvasWidth}
             canvasHeight={canvasHeight}
           >
-            <SlidePageProvider index={i} total={pages.length}>
+            <SlidePageProvider index={i} total={pages.length} pageId={pageIdFor(PageComp)}>
               <PageComp />
             </SlidePageProvider>
           </SlideCanvas>
@@ -837,6 +839,7 @@ function ThumbContents({
       </div>
       <div
         ref={boxRef}
+        data-slide-page-id={pageIdFor(PageComp) ?? undefined}
         className={cn(
           'relative shrink-0 overflow-hidden rounded-[4px] border bg-card motion-safe:transition-[border-color,box-shadow]',
           active
@@ -854,7 +857,7 @@ function ThumbContents({
           canvasWidth={canvasWidth}
           canvasHeight={canvasHeight}
         >
-          <SlidePageProvider index={index} total={total}>
+          <SlidePageProvider index={index} total={total} pageId={pageIdFor(PageComp)}>
             <PageComp />
           </SlidePageProvider>
         </SlideCanvas>

@@ -2,6 +2,11 @@
 
 Date: 2026-08-30
 
+Status: superseded by the authored occurrence model in
+[`page-occurrence-identity.md`](./page-occurrence-identity.md). This document preserves the spike
+evidence that ruled out array position and component occurrence counts. Its `RETHINK` decision
+describes the former page model, not the current implementation.
+
 Decision: **RETHINK**
 
 The element identity inputs can be recovered consistently from independently mounted React roots. The current page array model cannot assign a stable identity to two occurrences of the same page component without adding persistent per-occurrence data to the source. T-02 must not assume that page identity is solved.

@@ -6,6 +6,7 @@ import { format, useLocale } from '@/lib/use-locale';
 import { cn, pad2 } from '@/lib/utils';
 import type { DesignSystem } from '../lib/design';
 import { SlidePageProvider } from '../lib/page-context';
+import { pageIdFor } from '../lib/page-normalization';
 import type { Page } from '../lib/sdk';
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from '../lib/sdk';
 import type { SlideTransition } from '../lib/transition';
@@ -151,8 +152,7 @@ export function OverviewGrid({
               const isCurrent = i === current;
               return (
                 <OverviewThumb
-                  // biome-ignore lint/suspicious/noArrayIndexKey: pages list is render-stable
-                  key={i}
+                  key={pageIdFor(PageComp) ?? i}
                   buttonRef={isFocused ? focusedRef : undefined}
                   page={PageComp}
                   index={i}
@@ -237,6 +237,7 @@ function OverviewThumb({
     >
       <div
         ref={boxRef}
+        data-slide-page-id={pageIdFor(PageComp) ?? undefined}
         className={cn(
           'relative w-full overflow-hidden rounded-[4px] ring-1 transition-shadow',
           styles.thumbSurface,
@@ -253,7 +254,7 @@ function OverviewThumb({
           canvasWidth={canvasWidth}
           canvasHeight={canvasHeight}
         >
-          <SlidePageProvider index={index} total={total}>
+          <SlidePageProvider index={index} total={total} pageId={pageIdFor(PageComp)}>
             <PageComp />
           </SlidePageProvider>
         </SlideCanvas>

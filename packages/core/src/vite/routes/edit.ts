@@ -1,10 +1,14 @@
 import fs from 'node:fs/promises';
+import type { ServerResponse } from 'node:http';
 import type { ViteDevServer } from 'vite';
+import { isPageIdentityError, PageIdentityStaleError } from '../../app/lib/page-identity.ts';
 import { applyEdit, applyEditBatch, type EditOp } from '../../editing/edit-ops.ts';
+import { sourcePageOccurrencesOrThrow } from '../../editing/page-identities.ts';
 import { applyRevertAsset } from '../../editing/revert-asset.ts';
 import { validateMutationRequest } from '../../http/request-guard.ts';
 import {
   type ApiContext,
+  contentSourceModule,
   json,
   readBody,
   readSlideSource,
@@ -18,6 +22,7 @@ import {
 type EditBody = {
   slideId?: string;
   kind?: 'slide' | 'document';
+  pageId?: string;
   line?: number;
   column?: number;
   ops?: EditOp[];
@@ -27,8 +32,36 @@ type EditBody = {
 type EditBatchBody = {
   slideId?: string;
   kind?: 'slide' | 'document';
+  pageId?: string;
   edits?: Array<{ line?: number; column?: number; ops?: EditOp[]; strict?: boolean }>;
 };
+
+function identityFailure(res: ServerResponse, error: unknown): void {
+  if (!isPageIdentityError(error)) {
+    json(res, 422, { error: String((error as Error).message ?? error) });
+    return;
+  }
+  const status =
+    error.code === 'PAGE_IDENTITY_VALIDATION'
+      ? 400
+      : error.code === 'PAGE_IDENTITY_COLLISION' || error.code === 'PAGE_IDENTITY_STALE'
+        ? 409
+        : 422;
+  json(res, status, { error: error.message, name: error.name, code: error.code });
+}
+
+function assertCurrentPageIdentity(
+  source: string,
+  slideId: string,
+  kind: 'slide' | 'document' | undefined,
+  pageId: unknown,
+): void {
+  if (typeof pageId !== 'string') throw new PageIdentityStaleError(String(pageId ?? ''));
+  const occurrences = sourcePageOccurrencesOrThrow(source, contentSourceModule(slideId, kind));
+  if (!occurrences.some((occurrence) => occurrence.id === pageId)) {
+    throw new PageIdentityStaleError(pageId);
+  }
+}
 
 export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void {
   server.middlewares.use('/__edit', async (req, res, next) => {
@@ -49,6 +82,12 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
 
         const source = await readSlideSource(file);
         if (source === null) return json(res, 404, { error: 'slide not found' });
+
+        try {
+          assertCurrentPageIdentity(source, slideId, body.kind, body.pageId);
+        } catch (error) {
+          return identityFailure(res, error);
+        }
 
         const result = applyEdit(source, body.line, body.column ?? 0, body.ops, body.strict);
         if (!result.ok) return json(res, result.status, { error: result.error });
@@ -96,6 +135,12 @@ export function registerEditRoutes(server: ViteDevServer, ctx: ApiContext): void
 
         const source = await readSlideSource(file);
         if (source === null) return json(res, 404, { error: 'slide not found' });
+
+        try {
+          assertCurrentPageIdentity(source, slideId, body.kind, body.pageId);
+        } catch (error) {
+          return identityFailure(res, error);
+        }
 
         const edits = body.edits.map((edit) => ({
           line: edit.line ?? 0,

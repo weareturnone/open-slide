@@ -192,6 +192,43 @@ function isComponentJsxName(name: t.JSXOpeningElement['name']): boolean {
   return t.isJSXMemberExpression(name) || (t.isJSXIdentifier(name) && /^[A-Z]/.test(name.name));
 }
 
+function unwrapPageExpression(
+  expression: t.Expression | t.Declaration,
+): t.Expression | t.Declaration {
+  let current = expression;
+  while (
+    t.isTSAsExpression(current) ||
+    t.isTSSatisfiesExpression(current) ||
+    t.isTypeCastExpression(current) ||
+    t.isParenthesizedExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function legacyPageNameRegistration(ast: t.File, sourceModule: string): string {
+  if (!sourceModule.endsWith('/index.tsx')) return '';
+  const names = new Set<string>();
+  for (const statement of ast.program.body) {
+    if (!t.isExportDefaultDeclaration(statement)) continue;
+    const declaration = unwrapPageExpression(statement.declaration);
+    if (!t.isArrayExpression(declaration)) return '';
+    for (const element of declaration.elements) {
+      if (!element || t.isSpreadElement(element) || t.isJSXNamespacedName(element)) continue;
+      const expression = unwrapPageExpression(element);
+      if (t.isIdentifier(expression)) names.add(expression.name);
+    }
+    break;
+  }
+  if (names.size === 0) return '';
+
+  const registrations = [...names]
+    .map((name) => `register(${name}, ${JSON.stringify(sourceModule)}, ${JSON.stringify(name)});`)
+    .join('');
+  return `\n;((register) => {${registrations}})((component, source, name) => {if ((typeof component !== 'object' || component === null) && typeof component !== 'function') return;const key = Symbol.for('@open-slide/core/legacy-page-names');const current = globalThis[key];const registry = current instanceof WeakMap ? current : new WeakMap();const names = registry.get(component) instanceof Map ? registry.get(component) : new Map();names.set(source, name);registry.set(component, names);globalThis[key] = registry;});\n`;
+}
+
 export function injectLocTags(code: string, sourceModule?: string): string | null {
   const ast = tryParse(code);
   if (!ast) return null;
@@ -227,13 +264,14 @@ export function injectLocTags(code: string, sourceModule?: string): string | nul
     });
   });
 
-  if (insertions.length === 0) return null;
+  const legacyRegistration = sourceModule ? legacyPageNameRegistration(ast, sourceModule) : '';
+  if (insertions.length === 0 && legacyRegistration.length === 0) return null;
   insertions.sort((a, b) => b.offset - a.offset);
   let next = code;
   for (const ins of insertions) {
     next = next.slice(0, ins.offset) + ins.text + next.slice(ins.offset);
   }
-  return next;
+  return next + legacyRegistration;
 }
 
 export type LocTagsPluginOptions = {

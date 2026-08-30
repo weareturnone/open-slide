@@ -22,6 +22,7 @@ import {
 import { type SlideComment, useComments } from '@/lib/inspector/use-comments';
 import { type Edit, type EditOp, useEditor } from '@/lib/inspector/use-editor';
 import { isTypingTarget } from '@/lib/keys';
+import type { PageId, PageIdentityError } from '@/lib/page-identity';
 import type { ContentKind } from '@/lib/sdk';
 import { textDiff } from '@/lib/text-diff';
 import { useLocale } from '@/lib/use-locale';
@@ -378,11 +379,15 @@ export function useInspector(): InspectorCtx {
 export function InspectorProvider({
   slideId,
   pageIndex,
+  pageId,
+  pageIdentityError,
   children,
   kind = 'slide',
 }: {
   slideId: string;
   pageIndex: number;
+  pageId: PageId | null;
+  pageIdentityError: PageIdentityError | null;
   kind?: ContentKind;
   children: ReactNode;
 }) {
@@ -392,7 +397,12 @@ export function InspectorProvider({
   const [opsVersion, setOpsVersion] = useState(0);
   const commentsEnabled = kind === 'slide';
   const { comments, error, add, remove } = useComments(slideId, commentsEnabled);
-  const { applyEdit: requestEdit, applyEdits } = useEditor(slideId, kind);
+  const { applyEdit: requestEdit, applyEdits } = useEditor(
+    slideId,
+    kind,
+    pageId,
+    pageIdentityError,
+  );
   const history = useHistory();
   const { structuralLocked } = useHostedOperation();
 

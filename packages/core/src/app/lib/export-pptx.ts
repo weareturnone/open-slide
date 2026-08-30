@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { designToCssVars } from './design';
 import { downloadBlob, nextPaint, sleep } from './dom';
 import { SlidePageProvider } from './page-context';
+import { normalizeSlideModule, pageIdFor } from './page-normalization';
 import { isFrameAnimationSettled, waitForDataWaitfor, waitForFonts } from './print-ready';
 import { CANVAS_HEIGHT, CANVAS_WIDTH, type SlideModule } from './sdk';
 
@@ -35,7 +36,8 @@ export async function exportSlideAsImagePptx(
   slideId: string,
   onProgress?: (progress: PptxExportProgress) => void,
 ): Promise<void> {
-  const pages = slide.default ?? [];
+  const normalized = normalizeSlideModule(slide, `slides/${slideId}/index.tsx`);
+  const pages = normalized.default;
   if (pages.length === 0) return;
 
   const total = pages.length;
@@ -76,7 +78,9 @@ export async function exportSlideAsImagePptx(
     const Page = pages[i];
     if (!Page) continue;
     const host = document.createElement('div');
+    const pageId = pageIdFor(Page);
     host.setAttribute('data-osd-canvas', '');
+    if (pageId) host.setAttribute('data-slide-page-id', pageId);
     host.style.width = `${CANVAS_WIDTH}px`;
     host.style.height = `${CANVAS_HEIGHT}px`;
     host.style.overflow = 'hidden';
@@ -88,7 +92,11 @@ export async function exportSlideAsImagePptx(
     frames.push(host);
     const r = createRoot(host);
     r.render(
-      createElement(SlidePageProvider, { index: i, total: pages.length }, createElement(Page)),
+      createElement(
+        SlidePageProvider,
+        { index: i, total: pages.length, pageId },
+        createElement(Page),
+      ),
     );
     reactRoots.push(r);
   }

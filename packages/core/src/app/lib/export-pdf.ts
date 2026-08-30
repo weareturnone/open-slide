@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { designToCssVars } from './design';
 import { nextPaint, sleep } from './dom';
 import { SlidePageProvider } from './page-context';
+import { normalizeSlideModule, pageIdFor } from './page-normalization';
 import { isFrameAnimationSettled, waitForDataWaitfor, waitForFonts } from './print-ready';
 import { canvasSizeFor, type SlideModule } from './sdk';
 
@@ -106,7 +107,11 @@ export async function exportSlideAsPdf(
   slideId: string,
   onProgress?: (progress: PdfExportProgress) => void,
 ): Promise<void> {
-  const pages = slide.default ?? [];
+  const normalized = normalizeSlideModule(
+    slide,
+    `${slide.meta?.kind === 'document' ? 'documents' : 'slides'}/${slideId}/index.tsx`,
+  );
+  const pages = normalized.default;
   if (pages.length === 0) return;
   const canvas = canvasSizeFor(slide);
 
@@ -132,8 +137,10 @@ export async function exportSlideAsPdf(
     const Page = pages[i];
     if (!Page) continue;
     const host = document.createElement('div');
+    const pageId = pageIdFor(Page);
     host.className = 'os-print-frame';
     host.setAttribute('data-osd-canvas', '');
+    if (pageId) host.setAttribute('data-slide-page-id', pageId);
     host.style.width = `${canvas.width}px`;
     host.style.height = `${canvas.height}px`;
     if (designVars) {
@@ -148,7 +155,11 @@ export async function exportSlideAsPdf(
     frames.push(host);
     const r = createRoot(inner);
     r.render(
-      createElement(SlidePageProvider, { index: i, total: pages.length }, createElement(Page)),
+      createElement(
+        SlidePageProvider,
+        { index: i, total: pages.length, pageId },
+        createElement(Page),
+      ),
     );
     reactRoots.push(r);
   }

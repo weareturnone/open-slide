@@ -1,5 +1,10 @@
 import { useCallback } from 'react';
 import type { AuthoringVersionSnapshot } from '../authoring';
+import {
+  type PageId,
+  type PageIdentityError,
+  PageIdentityUnavailableError,
+} from '../page-identity';
 import type { ContentKind } from '../sdk';
 
 export type EditOp =
@@ -57,13 +62,30 @@ export class NoOpEditError extends Error {
   }
 }
 
-export function useEditor(slideId: string, kind: ContentKind = 'slide') {
+export function useEditor(
+  slideId: string,
+  kind: ContentKind = 'slide',
+  pageId: PageId | null = null,
+  pageIdentityError: PageIdentityError | null = null,
+) {
+  const currentPageId = useCallback((): PageId => {
+    if (pageIdentityError) throw pageIdentityError;
+    if (!pageId) {
+      throw new PageIdentityUnavailableError(
+        undefined,
+        'The current page identity is unavailable.',
+      );
+    }
+    return pageId;
+  }, [pageId, pageIdentityError]);
+
   const applyEdit = useCallback(
     async (line: number, column: number, ops: EditOp[]) => {
+      const identity = currentPageId();
       const res = await fetch('/__edit', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slideId, kind, line, column, ops, strict: true }),
+        body: JSON.stringify({ slideId, kind, pageId: identity, line, column, ops, strict: true }),
       });
       const body = (await res.json().catch(() => ({}))) as EditResponseBody;
       if (!res.ok) {
@@ -74,7 +96,7 @@ export function useEditor(slideId: string, kind: ContentKind = 'slide') {
       }
       return versionFromBody(body);
     },
-    [slideId, kind],
+    [slideId, kind, currentPageId],
   );
 
   // Batch many element edits into one file write and one HMR tick.
@@ -83,12 +105,14 @@ export function useEditor(slideId: string, kind: ContentKind = 'slide') {
   const applyEdits = useCallback(
     async (edits: Edit[]): Promise<EditBatchResult> => {
       if (edits.length === 0) return { results: [] };
+      const identity = currentPageId();
       const res = await fetch('/__edit/batch', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           slideId,
           kind,
+          pageId: identity,
           edits: edits.map((edit) => ({ ...edit, strict: true })),
         }),
       });
@@ -103,7 +127,7 @@ export function useEditor(slideId: string, kind: ContentKind = 'slide') {
       }
       return { results: body.results, version: versionFromBody(body) };
     },
-    [slideId, kind],
+    [slideId, kind, currentPageId],
   );
 
   return { applyEdit, applyEdits };

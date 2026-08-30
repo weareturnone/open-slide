@@ -4,19 +4,29 @@
  *   POST /__catalog       insert a layout at an exact page boundary
  *   POST /__decks         create a slide deck or A4 document
  */
-import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
+import type { ServerResponse } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ViteDevServer } from 'vite';
 import {
+  authoredPageId,
+  isPageIdentityError,
+  PageIdentityStaleError,
+  stablePageIdFromLabel,
+  validateStablePageId,
+} from '../../app/lib/page-identity.ts';
+import { sourcePageOccurrencesOrThrow } from '../../editing/page-identities.ts';
+import {
   insertNotesElementInSource,
   insertPageComponentInSource,
+  migrateLegacyPageOccurrencesInSource,
   SLIDE_ID_RE,
 } from '../../editing/slide-ops.ts';
 import {
   type ApiContext,
   contentRoot,
+  contentSourceModule,
   json,
   readBody,
   resolveContentEntryPath,
@@ -60,13 +70,72 @@ async function loadCatalog(ctx: ApiContext): Promise<CatalogModule | null> {
   }
 }
 
-function componentName(templateId: string): string {
+function componentName(templateId: string, source: string): string {
   const stem = templateId
     .split(/[^A-Za-z0-9]+/)
     .filter(Boolean)
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join('');
-  return `Studio${stem}${randomBytes(4).toString('hex')}`;
+  const base = `Studio${stem || 'Page'}`;
+  let candidate = base;
+  let suffix = 2;
+  while (new RegExp(`\\b${candidate}\\b`).test(source)) candidate = `${base}${suffix++}`;
+  return candidate;
+}
+
+function identityFailure(res: ServerResponse, error: unknown): void {
+  if (!isPageIdentityError(error)) {
+    json(res, 422, { error: String((error as Error).message ?? error) });
+    return;
+  }
+  const status =
+    error.code === 'PAGE_IDENTITY_VALIDATION'
+      ? 400
+      : error.code === 'PAGE_IDENTITY_COLLISION' || error.code === 'PAGE_IDENTITY_STALE'
+        ? 409
+        : 422;
+  json(res, status, { error: error.message, name: error.name, code: error.code });
+}
+
+function insertionIndex(
+  pageIds: readonly string[],
+  beforePageId: unknown,
+  afterPageId: unknown,
+): number {
+  const beforeIndex =
+    typeof beforePageId === 'string'
+      ? pageIds.indexOf(beforePageId)
+      : pageIds.length === 0
+        ? 0
+        : -1;
+  const afterIndex = typeof afterPageId === 'string' ? pageIds.indexOf(afterPageId) : -1;
+  if (typeof beforePageId === 'string' && beforeIndex < 0) {
+    throw new PageIdentityStaleError(beforePageId);
+  }
+  if (typeof afterPageId === 'string' && afterIndex < 0) {
+    throw new PageIdentityStaleError(afterPageId);
+  }
+  if (beforeIndex >= 0 && afterIndex >= 0 && beforeIndex !== afterIndex + 1) {
+    throw new PageIdentityStaleError(`${String(afterPageId)} -> ${String(beforePageId)}`);
+  }
+  if (beforeIndex >= 0) return beforeIndex;
+  if (afterIndex >= 0) return afterIndex + 1;
+  throw new PageIdentityStaleError('insertion-boundary');
+}
+
+function availableStableId(
+  templateId: string,
+  sourceModule: string,
+  pageIds: readonly string[],
+): string {
+  const base = stablePageIdFromLabel(templateId);
+  const occupied = new Set(pageIds);
+  let candidate = base as string;
+  let suffix = 2;
+  while (occupied.has(authoredPageId(sourceModule, candidate))) {
+    candidate = `${base}-${suffix++}`;
+  }
+  return validateStablePageId(candidate);
 }
 
 export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): void {
@@ -117,20 +186,43 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
         if (!contentDir.startsWith(`${root}${path.sep}`)) {
           return json(res, 400, { error: 'Invalid content path' });
         }
+        let createdSource = catalog.createDeckSource({ title, template, kind });
+        try {
+          createdSource = migrateLegacyPageOccurrencesInSource(
+            createdSource,
+            contentSourceModule(deckId, kind),
+          );
+        } catch (error) {
+          return identityFailure(res, error);
+        }
         await fs.mkdir(contentDir, { recursive: false });
-        await fs.writeFile(sourcePath, catalog.createDeckSource({ title, template, kind }), 'utf8');
+        await fs.writeFile(sourcePath, createdSource, 'utf8');
         return json(res, 200, { ok: true, deckId, kind });
       }
 
       const slideId = typeof body.slideId === 'string' ? body.slideId : '';
-      const index = body.index;
-      if (!Number.isInteger(index) || (index as number) < 0) {
-        return json(res, 400, { error: 'Invalid insertion index' });
-      }
       const sourcePath = resolveContentEntryPath(ctx, slideId, kind);
       if (!sourcePath) return json(res, 400, { error: 'Invalid content ID' });
       const current = await fs.readFile(sourcePath, 'utf8');
-      const name = componentName(template.id);
+      const sourceModule = contentSourceModule(slideId, kind);
+      let occurrences: ReturnType<typeof sourcePageOccurrencesOrThrow>;
+      let index: number;
+      try {
+        occurrences = sourcePageOccurrencesOrThrow(current, sourceModule);
+        index = insertionIndex(
+          occurrences.map((occurrence) => occurrence.id),
+          body.beforePageId,
+          body.afterPageId,
+        );
+      } catch (error) {
+        return identityFailure(res, error);
+      }
+      const pageStableId = availableStableId(
+        template.id,
+        sourceModule,
+        occurrences.map((occurrence) => occurrence.id),
+      );
+      const name = componentName(template.id, current);
       const componentSource = template.source.replace('__COMPONENT__', name);
       const dependencies = catalog.resolveCatalogInsertion(current, template, componentSource);
       if (!dependencies.ok) return json(res, 422, { error: dependencies.error });
@@ -138,15 +230,22 @@ export function registerCatalogRoutes(server: ViteDevServer, ctx: ApiContext): v
         dependencies.source,
         name,
         dependencies.componentSource,
-        index as number,
+        index,
+        pageStableId,
       );
       if (withPage === null) {
         return json(res, 422, { error: 'This content cannot accept the selected catalog page' });
       }
-      const nextSource = insertNotesElementInSource(withPage, index as number);
+      const nextSource = insertNotesElementInSource(withPage, index);
       if (nextSource === null) return json(res, 422, { error: 'Could not keep notes aligned' });
       await fs.writeFile(sourcePath, nextSource, 'utf8');
-      return json(res, 200, { ok: true, componentName: name, index, kind });
+      return json(res, 200, {
+        ok: true,
+        componentName: name,
+        index,
+        pageId: authoredPageId(sourceModule, pageStableId),
+        kind,
+      });
     } catch (error) {
       return json(res, 500, { error: String((error as Error).message ?? error) });
     }

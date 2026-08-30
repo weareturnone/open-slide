@@ -15,6 +15,11 @@ import {
 } from '@/components/ui/dialog';
 import { authoringReadOnly } from '@/lib/authoring';
 import { deployedStudioUrl } from '@/lib/hosted-deployment';
+import {
+  type PageId,
+  type PageIdentityError,
+  PageIdentityUnavailableError,
+} from '@/lib/page-identity';
 import type { ContentKind } from '@/lib/sdk';
 import { cn } from '@/lib/utils';
 
@@ -26,11 +31,19 @@ const publishConfig = config.authoring?.publish;
 export function CatalogInsertDialog({
   slideId,
   index,
+  pageCount,
+  beforePageId,
+  afterPageId,
+  pageIdentityError,
   onClose,
   kind = 'slide',
 }: {
   slideId: string;
   index: number | null;
+  pageCount: number;
+  beforePageId: PageId | null;
+  afterPageId: PageId | null;
+  pageIdentityError: PageIdentityError | null;
   onClose: () => void;
   kind?: ContentKind;
 }) {
@@ -62,12 +75,25 @@ export function CatalogInsertDialog({
     if (index === null || !selectedId || preparing) return;
     setPreparing(true);
     try {
+      if (pageIdentityError) throw pageIdentityError;
+      if (pageCount > 0 && !beforePageId && !afterPageId) {
+        throw new PageIdentityUnavailableError(
+          undefined,
+          'The catalog insertion boundary has no page identity.',
+        );
+      }
       const endpoint = import.meta.env.DEV ? '/__catalog' : catalogConfig.insertEndpoint;
       if (import.meta.env.DEV) {
         const insertResponse = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ slideId, index, templateId: selectedId, kind }),
+          body: JSON.stringify({
+            slideId,
+            beforePageId,
+            afterPageId,
+            templateId: selectedId,
+            kind,
+          }),
         });
         const inserted = (await insertResponse.json().catch(() => ({}))) as { error?: string };
         if (!insertResponse.ok) {
@@ -85,7 +111,7 @@ export function CatalogInsertDialog({
         label: `Insert ${kind === 'document' ? 'page' : 'slide'}`,
         endpoint,
         method: 'POST',
-        body: { slideId, index, templateId: selectedId, kind },
+        body: { slideId, beforePageId, afterPageId, templateId: selectedId, kind },
         onCommitted: () => {
           setPreparing(false);
           onClose();

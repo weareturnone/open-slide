@@ -30,6 +30,7 @@ import {
 import { SlideCanvas } from '../components/slide-canvas';
 import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/slide-preload-layer';
 import { SlidePageProvider } from '../lib/page-context';
+import { pageIdFor } from '../lib/page-normalization';
 import { CANVAS_HEIGHT, CANVAS_WIDTH, type SlideModule } from '../lib/sdk';
 import { loadSlide, slideIds } from '../lib/slides';
 import { type StepController, StepHost } from '../lib/step-context';
@@ -212,9 +213,12 @@ export function Presenter() {
         {/* Now-showing */}
         <section className="flex min-h-0 flex-col gap-3">
           <SectionLabel>{t.presenter.nowShowing}</SectionLabel>
-          <div className="relative min-h-0 flex-1 overflow-hidden rounded-[8px] bg-black ring-1 ring-border">
+          <div
+            data-slide-page-id={pageIdFor(CurrentPage) ?? undefined}
+            className="relative min-h-0 flex-1 overflow-hidden rounded-[8px] bg-black ring-1 ring-border"
+          >
             <SlideCanvas flat design={slide.design}>
-              <SlidePageProvider index={index} total={total}>
+              <SlidePageProvider index={index} total={total} pageId={pageIdFor(CurrentPage)}>
                 <PreviewStepHost revealed={stepIndex}>
                   <CurrentPage />
                 </PreviewStepHost>
@@ -240,12 +244,17 @@ export function Presenter() {
           <div className="flex flex-col gap-2">
             <SectionLabel>{hasNext ? t.presenter.upNext : t.presenter.lastSlide}</SectionLabel>
             <div
+              data-slide-page-id={pageIdFor(NextPage) ?? undefined}
               className="relative w-full overflow-hidden rounded-[8px] bg-black ring-1 ring-border"
               style={{ aspectRatio: `${CANVAS_WIDTH}/${CANVAS_HEIGHT}` }}
             >
               {NextPage ? (
                 <SlideCanvas flat freezeMotion design={slide.design}>
-                  <SlidePageProvider index={nextPageIndex} total={total}>
+                  <SlidePageProvider
+                    index={nextPageIndex}
+                    total={total}
+                    pageId={pageIdFor(NextPage)}
+                  >
                     <PreviewStepHost revealed={nextRevealed}>
                       <NextPage />
                     </PreviewStepHost>
@@ -455,12 +464,17 @@ function DeckSwitcher({
                   )}
                 >
                   <div
+                    data-slide-page-id={pageIdFor(FirstPage) ?? undefined}
                     className="w-24 shrink-0 overflow-hidden rounded-[4px] bg-black ring-1 ring-border"
                     style={{ aspectRatio: `${CANVAS_WIDTH}/${CANVAS_HEIGHT}` }}
                   >
                     {FirstPage && (
                       <SlideCanvas flat freezeMotion design={mod.design}>
-                        <SlidePageProvider index={0} total={mod.default.length}>
+                        <SlidePageProvider
+                          index={0}
+                          total={mod.default.length}
+                          pageId={pageIdFor(FirstPage)}
+                        >
                           <PreviewStepHost revealed={0}>
                             <FirstPage />
                           </PreviewStepHost>

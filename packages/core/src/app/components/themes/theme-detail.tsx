@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn, pad2 } from '@/lib/utils';
 import { SlidePageProvider } from '../../lib/page-context';
+import { pageIdFor } from '../../lib/page-normalization';
 import type { SlideModule } from '../../lib/sdk';
 import { loadSlide, slidesByTheme } from '../../lib/slides';
 import { loadThemeDemo, type ThemeDemoModule, themes } from '../../lib/themes';
@@ -107,7 +108,11 @@ export function ThemeDetail({ themeId, onBack }: { themeId: string; onBack: () =
                 </div>
               ) : Current ? (
                 <SlideCanvas flat freezeMotion design={demo.design}>
-                  <SlidePageProvider index={pageIndex} total={totalPages}>
+                  <SlidePageProvider
+                    index={pageIndex}
+                    total={totalPages}
+                    pageId={pageIdFor(Current)}
+                  >
                     <Current />
                   </SlidePageProvider>
                 </SlideCanvas>
@@ -233,7 +238,11 @@ function ThemeSlideCard({ id }: { id: string }) {
         {FirstPage ? (
           <div className="h-full w-full">
             <SlideCanvas flat freezeMotion design={slide?.design}>
-              <SlidePageProvider index={0} total={slide?.default.length ?? 1}>
+              <SlidePageProvider
+                index={0}
+                total={slide?.default.length ?? 1}
+                pageId={pageIdFor(FirstPage)}
+              >
                 <FirstPage />
               </SlidePageProvider>
             </SlideCanvas>
