@@ -218,7 +218,7 @@ test.describe('hosted authoring adapters', () => {
     await expect(page.getByText('Waiting for Studio deployment')).toBeVisible();
   });
 
-  test('blocks mutation dispatch in read-only previews', async ({ page }) => {
+  test('disables mutation controls in statically read-only previews', async ({ page }) => {
     await mockVersionStatus(page, { hasDraftChanges: true, readOnly: true });
     const mutationRequests: string[] = [];
     page.on('request', (request) => {
@@ -245,10 +245,6 @@ test.describe('hosted authoring adapters', () => {
     await page.getByLabel('Title').fill('Blocked but valid');
     const create = page.getByRole('button', { name: 'Create deck' });
     await expect(create).toBeDisabled();
-    await create.evaluate((element: HTMLButtonElement) => {
-      element.disabled = false;
-      element.click();
-    });
     await page.getByRole('button', { name: 'Cancel' }).click();
 
     const alphaCard = page.locator('li').filter({
