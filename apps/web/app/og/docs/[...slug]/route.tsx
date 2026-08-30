@@ -15,16 +15,8 @@ const MUTED = '#636363';
 const RULE = '#E4E4E4';
 const ACCENT = '#DE3B3D';
 
-async function loadGoogleFont(family: string, weight: number, italic = false) {
-  const ital = italic ? 'ital,' : '';
-  const axis = italic ? `${ital}wght@1,${weight}` : `wght@${weight}`;
-  const css = await fetch(
-    `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, '+')}:${axis}&display=swap`,
-    { headers: { 'User-Agent': 'Mozilla/5.0 (Open-Slide OG)' } },
-  ).then((r) => r.text());
-  const url = css.match(/src:\s*url\((https:[^)]+)\)\s*format/)?.[1];
-  if (!url) throw new Error(`Could not resolve font: ${family} ${weight}`);
-  return fetch(url).then((r) => r.arrayBuffer());
+function loadBundledFont(file: string) {
+  return readFile(path.join(process.cwd(), 'public/fonts', file));
 }
 
 export async function GET(_req: Request, { params }: RouteContext<'/og/docs/[...slug]'>) {
@@ -33,9 +25,9 @@ export async function GET(_req: Request, { params }: RouteContext<'/og/docs/[...
   if (!page) notFound();
 
   const [geistRegular, geistMedium, mono, logoBuffer] = await Promise.all([
-    loadGoogleFont('Geist', 400),
-    loadGoogleFont('Geist', 500),
-    loadGoogleFont('Geist Mono', 500),
+    loadBundledFont('Geist-Regular.ttf'),
+    loadBundledFont('Geist-Medium.ttf'),
+    loadBundledFont('GeistMono-Medium.ttf'),
     readFile(path.join(process.cwd(), 'public/open-slide.png')),
   ]);
   const logoSrc = `data:image/png;base64,${logoBuffer.toString('base64')}`;
