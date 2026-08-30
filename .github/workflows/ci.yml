@@ -29,9 +29,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify bundled font provenance
-        run: pnpm --filter web verify:fonts
-
       - name: Run format check
         run: pnpm format:check
 
@@ -79,6 +76,36 @@ jobs:
 
       - name: Run unit tests
         run: pnpm test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core
+        run: pnpm --filter @open-slide/core build
+
+      - name: Build CLI
+        run: pnpm --filter @open-slide/cli build
+
+      - name: Build demo
+        run: pnpm --filter demo build
+
+      - name: Build web and verify bundled fonts
+        run: pnpm --filter web build
 
   e2e:
     runs-on: ubuntu-latest
