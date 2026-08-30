@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify bundled font provenance
+        run: pnpm --filter web verify:fonts
+
       - name: Run format check
         run: pnpm format:check
 
