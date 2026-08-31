@@ -231,6 +231,69 @@ describe('hosted operation receipts and idempotency', () => {
     }
   });
 
+  it('binds catalog receipts to the exact requested insertion boundary', () => {
+    const request = parseAuthoringMutationRequest(
+      'catalog.insert',
+      {
+        operationId,
+        requestHash,
+        expectedDraftSha: draftSha,
+        expectedMainSha: mainSha,
+        slideId: 'deck',
+        kind: 'slide',
+        templateId: 'agenda',
+        pageCount: 2,
+        afterPageId: 'slides/deck/index.jsx#a',
+        beforePageId: 'slides/deck/index.jsx#b',
+      },
+      { hosted: true },
+    );
+    const catalogReceipt = {
+      ...receipt,
+      kind: 'catalog.insert' as const,
+      proof: {
+        version: 1 as const,
+        kind: 'catalog.insert' as const,
+        sourceModule: 'slides/deck/index.jsx',
+        pageIds: [
+          'slides/deck/index.jsx#a',
+          'slides/deck/index.jsx#created',
+          'slides/deck/index.jsx#b',
+        ],
+        focusPageId: 'slides/deck/index.jsx#created',
+        resolvedPageIndex: 1,
+        templateId: 'agenda',
+        createdPageId: 'slides/deck/index.jsx#created',
+      },
+    };
+
+    expect(
+      parseHostedOperationReceipt(catalogReceipt, request.coordination ?? undefined, request),
+    ).toEqual(catalogReceipt);
+
+    const invalidPageOrders = [
+      ['slides/deck/index.jsx#a', 'slides/deck/index.jsx#b', 'slides/deck/index.jsx#created'],
+      ['slides/deck/index.jsx#created', 'slides/deck/index.jsx#a', 'slides/deck/index.jsx#b'],
+      ['slides/deck/index.jsx#a', 'slides/deck/index.jsx#created', 'slides/deck/index.jsx#other'],
+    ];
+    for (const pageIds of invalidPageOrders) {
+      expect(() =>
+        parseHostedOperationReceipt(
+          {
+            ...catalogReceipt,
+            proof: {
+              ...catalogReceipt.proof,
+              pageIds,
+              resolvedPageIndex: pageIds.indexOf('slides/deck/index.jsx#created'),
+            },
+          },
+          request.coordination ?? undefined,
+          request,
+        ),
+      ).toThrow(/catalog proof/i);
+    }
+  });
+
   it('uses the authoritative duplicate result when concurrent suffix allocation changes the id', () => {
     const concurrentReceipt = parseHostedOperationReceipt({
       ...receipt,

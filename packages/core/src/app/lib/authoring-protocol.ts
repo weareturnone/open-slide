@@ -404,11 +404,20 @@ function assertReceiptMatchesRequest(
     return;
   }
   if (request.kind === 'catalog.insert' && receipt.proof.kind === 'catalog.insert') {
+    const createdIndex = receipt.proof.pageIds.indexOf(receipt.proof.createdPageId);
+    const beforeIndex = request.beforePageId
+      ? receipt.proof.pageIds.indexOf(request.beforePageId)
+      : null;
+    const afterIndex = request.afterPageId
+      ? receipt.proof.pageIds.indexOf(request.afterPageId)
+      : null;
     if (
       receipt.proof.templateId !== request.templateId ||
       receipt.proof.pageIds.length !== request.pageCount + 1 ||
       receipt.proof.focusPageId !== receipt.proof.createdPageId ||
-      !receipt.proof.pageIds.includes(receipt.proof.createdPageId)
+      createdIndex < 0 ||
+      (beforeIndex !== null && beforeIndex !== createdIndex + 1) ||
+      (afterIndex !== null && afterIndex !== createdIndex - 1)
     ) {
       throw new Error('Catalog proof does not match the original request');
     }

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { currentAuthoringVersion, rememberAuthoringVersion } from './authoring-version.ts';
 import {
   assertHostedVersionWritable,
+  fetchHostedVersion,
   parseHostedOperationStatus,
   waitForHostedDeployment,
 } from './hosted-deployment.ts';
@@ -18,6 +20,70 @@ describe('assertHostedVersionWritable', () => {
   it('allows writable or omitted runtime status', () => {
     expect(() => assertHostedVersionWritable({ readOnly: false })).not.toThrow();
     expect(() => assertHostedVersionWritable({})).not.toThrow();
+  });
+});
+
+describe('fetchHostedVersion', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('does not let an older delayed response replace a newer started status read', async () => {
+    vi.stubGlobal('window', { location: { origin: 'https://studio.example' } });
+    const resolvers: Array<(response: Response) => void> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolvers.push(resolve);
+          }),
+      ),
+    );
+    const older = {
+      draftSha: 'a'.repeat(40),
+      mainSha: 'b'.repeat(40),
+      deployedSha: 'b'.repeat(40),
+      hasDraftChanges: true,
+    };
+    const newer = { ...older, draftSha: 'c'.repeat(40) };
+
+    const olderRead = fetchHostedVersion('/api/studio/version');
+    const newerRead = fetchHostedVersion('/api/studio/version');
+    resolvers[1]?.(Response.json(newer));
+    await expect(newerRead).resolves.toEqual(newer);
+    resolvers[0]?.(Response.json(older));
+    await expect(olderRead).resolves.toEqual(older);
+
+    expect(currentAuthoringVersion()).toEqual(newer);
+  });
+
+  it('does not let an in-flight status read replace a newer mutation response', async () => {
+    vi.stubGlobal('window', { location: { origin: 'https://studio.example' } });
+    let resolveStatus: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveStatus = resolve;
+          }),
+      ),
+    );
+    const older = {
+      draftSha: 'd'.repeat(40),
+      mainSha: 'e'.repeat(40),
+      deployedSha: 'e'.repeat(40),
+      hasDraftChanges: true,
+    };
+    const mutationVersion = { ...older, draftSha: 'f'.repeat(40) };
+
+    const pendingRead = fetchHostedVersion('/api/studio/version');
+    rememberAuthoringVersion(mutationVersion);
+    resolveStatus?.(Response.json(older));
+    await expect(pendingRead).resolves.toEqual(older);
+
+    expect(currentAuthoringVersion()).toEqual(mutationVersion);
   });
 });
 

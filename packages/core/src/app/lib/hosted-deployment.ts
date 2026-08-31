@@ -1,4 +1,4 @@
-import { rememberAuthoringVersion } from './authoring-version.ts';
+import { beginAuthoringVersionRead, rememberAuthoringVersion } from './authoring-version.ts';
 
 export type HostedVersionState = {
   draftSha: string;
@@ -271,6 +271,7 @@ export async function fetchHostedVersion(
   statusEndpoint: string,
   options: { targetSha?: string; signal?: AbortSignal } = {},
 ): Promise<HostedVersionState> {
+  const readEpoch = beginAuthoringVersionRead();
   const params = options.targetSha ? { targetSha: options.targetSha } : undefined;
   const response = await fetch(cacheBustedEndpoint(statusEndpoint, params), {
     cache: 'no-store',
@@ -280,7 +281,7 @@ export async function fetchHostedVersion(
     response,
     `Status request failed with ${response.status}`,
   );
-  rememberAuthoringVersion(version);
+  rememberAuthoringVersion(version, readEpoch);
   return version;
 }
 
