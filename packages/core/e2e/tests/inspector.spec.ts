@@ -8,6 +8,7 @@ import {
 } from './helpers.ts';
 
 type RenderedProvenance = {
+  identity: string | null;
   sourceModule: string;
   elementLocation: string;
   targetFingerprint: string;
@@ -16,8 +17,9 @@ type RenderedProvenance = {
 
 async function renderedProvenance(
   locator: import('@playwright/test').Locator,
+  pageId: string | null = null,
 ): Promise<RenderedProvenance> {
-  return locator.evaluate((element) => {
+  return locator.evaluate((element, authoredPageId) => {
     type Fiber = {
       return: Fiber | null;
       key?: null | string | number;
@@ -49,8 +51,27 @@ async function renderedProvenance(
     if (!sourceModule || !elementLocation || !targetFingerprint || callsites.length === 0) {
       throw new Error('Rendered provenance is incomplete');
     }
-    return { sourceModule, elementLocation, targetFingerprint, callsites };
-  });
+    const identity = authoredPageId
+      ? JSON.stringify([
+          'osd1',
+          authoredPageId,
+          callsites,
+          sourceModule,
+          elementLocation,
+          targetFingerprint,
+        ])
+      : null;
+    return { identity, sourceModule, elementLocation, targetFingerprint, callsites };
+  }, pageId);
+}
+
+async function renderedIdentity(
+  locator: import('@playwright/test').Locator,
+  pageId: string,
+): Promise<RenderedProvenance & { identity: string }> {
+  const rendered = await renderedProvenance(locator, pageId);
+  if (!rendered.identity) throw new Error('Rendered page identity is incomplete');
+  return { ...rendered, identity: rendered.identity };
 }
 
 test.describe('inspector editing', () => {
@@ -385,15 +406,19 @@ test.describe('inspector editing', () => {
 
     const canvasLeft = await renderedProvenance(
       editorCanvas(page).locator('[data-provenance-label="Nested provenance left"]'),
+      pageId,
     );
     const thumbnailLeft = await renderedProvenance(
       thumbnail.locator('[data-provenance-label="Nested provenance left"]'),
+      pageId,
     );
     const canvasRight = await renderedProvenance(
       editorCanvas(page).locator('[data-provenance-label="Nested provenance right"]'),
+      pageId,
     );
     const thumbnailRight = await renderedProvenance(
       thumbnail.locator('[data-provenance-label="Nested provenance right"]'),
+      pageId,
     );
 
     expect(thumbnailLeft).toEqual(canvasLeft);

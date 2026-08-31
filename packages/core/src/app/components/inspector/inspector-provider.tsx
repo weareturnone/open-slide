@@ -20,12 +20,7 @@ import {
   notifyAuthoringChanged,
 } from '@/lib/authoring';
 import { type SlideComment, useComments } from '@/lib/inspector/use-comments';
-import {
-  type Edit,
-  type EditBatchResult,
-  type EditOp,
-  useEditor,
-} from '@/lib/inspector/use-editor';
+import { type Edit, type EditOp, useEditor } from '@/lib/inspector/use-editor';
 import { isTypingTarget } from '@/lib/keys';
 import { type PageId, type PageIdentityError, pageIdSource } from '@/lib/page-identity';
 import type { ContentKind } from '@/lib/sdk';
@@ -402,7 +397,7 @@ export function InspectorProvider({
   const [inlineEdit, setInlineEdit] = useState<InlineEditTarget | null>(null);
   const [opsVersion, setOpsVersion] = useState(0);
   const commentsEnabled = kind === 'slide';
-  const { comments, error, refetch, add, remove } = useComments(slideId, commentsEnabled);
+  const { comments, error, add, remove } = useComments(slideId, commentsEnabled);
   const sourceModule = pageId ? pageIdSource(pageId) : null;
   const { structuralLocked } = useHostedOperation();
   const { applyEdit: requestEdit, applyEdits } = useEditor(

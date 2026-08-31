@@ -599,10 +599,7 @@ function SlideCard({
             style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}
           >
             {FirstPage ? (
-              <div
-                data-slide-page-id={pageIdFor(FirstPage) ?? undefined}
-                className="h-full w-full"
-              >
+              <div data-slide-page-id={pageIdFor(FirstPage) ?? undefined} className="h-full w-full">
                 <SlideCanvas
                   flat
                   freezeMotion
