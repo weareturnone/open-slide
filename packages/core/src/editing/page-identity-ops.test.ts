@@ -131,6 +131,22 @@ describe('identity-authoritative page source operations', () => {
     );
   });
 
+  it('preserves directive prologues when it injects the page factory import', () => {
+    const source = [
+      "'use client';",
+      'const Cover = () => null;',
+      'export default [Cover];',
+      '',
+    ].join('\n');
+
+    const migrated = migrateLegacyPageOccurrencesInSource(source, sourceModule);
+
+    expect(migrated.startsWith("'use client';\nimport { page } from '@open-slide/core';")).toBe(
+      true,
+    );
+    expect(pageIds(migrated)).toEqual([`${sourceModule}#cover`]);
+  });
+
   it('writes an authored id for inserted catalog pages', () => {
     const source = ['const Cover = () => null;', 'export default [Cover];', ''].join('\n');
     const inserted = insertPageComponentInSource(
@@ -258,6 +274,26 @@ describe('identity-authoritative page source operations', () => {
         'const Cover = () => null;',
         'const pages = [Cover];',
         '{ const pages = [Cover]; }',
+        'export default pages;',
+      ].join('\n'),
+      [
+        'const Cover = () => null;',
+        'const pages = [Cover];',
+        'pages.reverse();',
+        'export default pages;',
+      ].join('\n'),
+      [
+        'const Cover = () => null;',
+        'const pages = [Cover];',
+        'const alias = pages;',
+        'alias.reverse();',
+        'export default pages;',
+      ].join('\n'),
+      [
+        'declare function mutate(value: unknown[]): void;',
+        'const Cover = () => null;',
+        'const pages = [Cover];',
+        'mutate(pages);',
         'export default pages;',
       ].join('\n'),
     ];

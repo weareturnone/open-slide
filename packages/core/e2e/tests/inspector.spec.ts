@@ -97,15 +97,75 @@ test.describe('inspector editing', () => {
     await expect(editorCanvas(page).getByText('Edited via inspector')).toBeVisible();
     await expect(page.getByText('1 unsaved change')).toBeVisible();
 
+    const savePosts: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST') savePosts.push(new URL(request.url()).pathname);
+    });
     const saved = page.waitForResponse(
-      (res) => res.url().includes('/__edit') && res.request().method() === 'POST',
+      (res) => new URL(res.url()).pathname === '/__edit/batch' && res.request().method() === 'POST',
     );
     await page.getByRole('button', { name: 'Save' }).click();
-    expect((await saved).status()).toBe(200);
+    const response = await saved;
+    expect(response.status()).toBe(200);
+    expect(response.request().postDataJSON()).toMatchObject({
+      slideId: 'insp-save',
+      kind: 'slide',
+      pageId: 'slides/insp-save/index.tsx#only',
+      edits: [expect.objectContaining({ strict: true })],
+    });
+    expect(savePosts).toEqual(['/__edit/batch']);
     await expect.poll(() => readSlideSource('insp-save')).toContain('Edited via inspector');
   });
 
-  test('a rejected save stays dirty and never reports success', async ({ page, request }) => {
+  test('a newer edit remains pending while an older save is in flight', async ({
+    page,
+    request,
+  }) => {
+    await openEditable(page, request, 'insp-save-inflight');
+    await page.getByTitle('Inspect').click();
+    await editorCanvas(page).getByText('Editable headline').click();
+    const input = page.locator('aside[data-inspector-ui]').getByPlaceholder('Element text');
+    await input.fill('First save snapshot');
+
+    let releaseFirst = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let acknowledgeFirst = () => {};
+    const intercepted = new Promise<void>((resolve) => {
+      acknowledgeFirst = resolve;
+    });
+    let hold = true;
+    await page.route('**/__edit/batch', async (route) => {
+      if (!hold) return route.continue();
+      hold = false;
+      acknowledgeFirst();
+      await gate;
+      await route.continue();
+    });
+
+    const firstResponse = page.waitForResponse(
+      (res) => new URL(res.url()).pathname === '/__edit/batch' && res.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Save' }).click();
+    await intercepted;
+    await input.fill('Newer edit stays pending');
+    releaseFirst();
+    expect((await firstResponse).status()).toBe(200);
+
+    await expect(page.getByText('1 unsaved change')).toBeVisible();
+    await expect(input).toHaveValue('Newer edit stays pending');
+    const secondResponse = page.waitForResponse(
+      (res) => new URL(res.url()).pathname === '/__edit/batch' && res.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Save' }).click();
+    expect((await secondResponse).status()).toBe(200);
+    await expect
+      .poll(() => readSlideSource('insp-save-inflight'))
+      .toContain('Newer edit stays pending');
+  });
+
+  test('a rejected save stays dirty and succeeds on retry', async ({ page, request }) => {
     await openEditable(page, request, 'insp-save-rejected');
     await page.getByTitle('Inspect').click();
     await editorCanvas(page).getByText('Editable headline').click();
@@ -115,7 +175,9 @@ test.describe('inspector editing', () => {
       .getByPlaceholder('Element text')
       .fill('This edit must remain pending');
 
+    let rejectSave = true;
     await page.route('**/__edit/batch', async (route) => {
+      if (!rejectSave) return route.continue();
       await route.fulfill({
         status: 409,
         contentType: 'application/json',
@@ -133,6 +195,42 @@ test.describe('inspector editing', () => {
     await expect(page.getByText("Couldn't save:")).toBeVisible();
     await expect(page.getByText('1 unsaved change')).toBeVisible();
     await expect(page.getByText('Saved', { exact: true })).toHaveCount(0);
+
+    rejectSave = false;
+    const retried = page.waitForResponse(
+      (res) => new URL(res.url()).pathname === '/__edit/batch' && res.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Save' }).click();
+    expect((await retried).status()).toBe(200);
+    await expect
+      .poll(() => readSlideSource('insp-save-rejected'))
+      .toContain('This edit must remain pending');
+    await expect(page.getByText('1 unsaved change')).toHaveCount(0);
+  });
+
+  test('an immediate edit posts the exact current page identity directly', async ({
+    page,
+    request,
+  }) => {
+    await openEditable(page, request, 'insp-immediate');
+    await page.getByTitle('Inspect').click();
+    await editorCanvas(page).getByText('Editable body copy').click();
+
+    const edited = page.waitForResponse(
+      (res) => new URL(res.url()).pathname === '/__edit' && res.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Delete element' }).click();
+    const response = await edited;
+
+    expect(response.status()).toBe(200);
+    expect(response.request().postDataJSON()).toMatchObject({
+      slideId: 'insp-immediate',
+      kind: 'slide',
+      pageId: 'slides/insp-immediate/index.tsx#only',
+      strict: true,
+      ops: [expect.objectContaining({ kind: 'delete-element' })],
+    });
+    await expect.poll(() => readSlideSource('insp-immediate')).not.toContain('Editable body copy');
   });
 
   test('discard reverts the edit without touching the file', async ({ page, request }) => {

@@ -135,10 +135,11 @@ Windows drive paths, traversal, `./`, empty segments, query strings, and fragmen
 | `page.duplicate`, `POST /__slides/:id/pages/duplicate` | `{ "pageId": PageId }` | `200 { "ok": true, "slideId": string, "index": number, "pageId": PageId }`; `pageId` is the persisted copy |
 | `page.delete`, `DELETE /__slides/:id/pages` | `{ "pageId": PageId }` | `200 { "ok": true, "slideId": string, "index": number, "pageId": PageId }`; `pageId` is the deleted occurrence |
 | `catalog.insert`, `POST /__catalog` | `{ "slideId": string, "kind": ContentKind, "templateId": string, "beforePageId"?: PageId, "afterPageId"?: PageId }` | `200 { "ok": true, "componentName": string, "index": number, "pageId": PageId, "kind": ContentKind }` |
-| `inspector.batch-edit`, `POST /__edit/batch` | `{ "slideId": string, "kind": ContentKind, "pageId": PageId, "edits": Edit[] }` | `200 { "ok": true, "changed": boolean, "results": [{ "ok": true }, ...] }` |
+| `inspector.edit`, `POST /__edit` | `{ "slideId": string, "kind": ContentKind, "pageId": PageId, "line": number, "column": number, "ops": EditOp[], "strict": true }` | `200 { "ok": true, "changed": boolean }` |
+| `inspector.batch-edit`, `POST /__edit/batch` | `{ "slideId": string, "kind": ContentKind, "pageId": PageId, "edits": (Edit & { "strict": true })[] }` | `200 { "ok": true, "changed": boolean, "results": [{ "ok": true }, ...] }` |
 
-The inspector uses the batch endpoint for one edit as well as many. Local Vite clients omit hosted
-coordination fields. Document slide routes add `?kind=document`.
+Immediate inspector actions use the direct endpoint. Buffered Save uses the batch endpoint. Both
+send the current page ID. Document edits use `"kind": "document"` in the request body.
 
 Catalog neighbors identify one exact boundary. At the start, only `beforePageId` is present. At the
 end, only `afterPageId` is present. Both are absent for an empty array. Between pages, both are
@@ -150,9 +151,19 @@ resolution, transformation, same-directory exclusive temporary write, file sync,
 atomic rename, and directory sync where supported. A failed transform leaves the original file
 untouched. Cleanup removes only the temporary file that the transaction created exclusively.
 
-### Hosted request envelope
+### Hosted inspector draft saves
 
-Production adds all four fields below to every structural or inspector request:
+The host maps the same direct inspector endpoints to authenticated draft writers. A successful
+hosted response adds the current `draftSha`, `mainSha`, optional `deployedSha`, and
+`hasDraftChanges`. Each hosted request also sends `expectedHead`, set to the latest known draft SHA.
+The server rejects a stale head instead of applying the edit to an unexpected draft. Inspector Save
+stops after the draft commit. It does not add structural coordination fields, return an operation
+receipt, publish to main, or poll deployment status. `Publish all` remains the only non-structural
+publication action.
+
+### Hosted structural request envelope
+
+Production adds all four fields below to every structural request:
 
 ```ts
 type AuthoringCoordination = {
@@ -163,11 +174,20 @@ type AuthoringCoordination = {
 };
 ```
 
+The structural body also carries `slideId` and the content `kind`. Reorder requires `pageIds` and
+`focusPageId`. Duplicate and delete require the exact `pageId`. Catalog insert includes
+`templateId` and `pageCount`, and includes only non-null neighbors. An empty artifact uses
+`pageCount: 0` with no neighbors. A non-empty artifact requires at least one neighbor.
+
 `requestHash` is SHA-256 over canonical JSON containing the uppercase HTTP method, normalized path
 and sorted query string, and request body. Object keys are sorted recursively. Array order is kept.
 `operationId` and `requestHash` are omitted from the hashed body; expected heads remain in it. This
 makes a retry of the same logical request hash identically even when transport code rebuilds the
 object in another key order.
+
+Before a structural mutation starts, the client stores the operation ID, hash, expected heads,
+endpoint, method, and complete JSON body in session storage. If the response is lost, retry replays
+that exact stored request. A storage failure prevents dispatch.
 
 The operation store applies these rules before reading or writing repository content:
 
@@ -196,8 +216,7 @@ type HostedOperationReceipt = {
   version: 1;
   operationId: string;
   requestHash: string;
-  kind: 'slide.reorder' | 'page.duplicate' | 'page.delete' |
-    'catalog.insert' | 'inspector.batch-edit';
+  kind: 'slide.reorder' | 'page.duplicate' | 'page.delete' | 'catalog.insert';
   artifactId: string;
   baseDraftSha: string;
   baseMainSha: string;
@@ -217,7 +236,6 @@ Every proof has `version: 1`, `kind`, the exact `sourceModule`, final `pageIds`,
 | `page.duplicate` | `sourcePageId`, `createdPageId` |
 | `page.delete` | `deletedPageId` |
 | `catalog.insert` | `templateId`, `createdPageId` |
-| `inspector.batch-edit` | `editedPageId`, `editCount` |
 
 The client rejects a receipt whose operation ID, request hash, base heads, kind, proof, source path,
 or page IDs do not match the request contract. Status polling can use `focusPageId` and

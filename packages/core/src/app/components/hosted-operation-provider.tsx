@@ -12,11 +12,7 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { authoringReadOnly } from '@/lib/authoring';
-import {
-  type AuthoringMutationKind,
-  authoringRequestHash,
-  parseHostedOperationReceipt,
-} from '@/lib/authoring-protocol';
+import type { AuthoringMutationKind } from '@/lib/authoring-protocol';
 import {
   assertHostedVersionWritable,
   deployedStudioUrl,
@@ -27,6 +23,11 @@ import {
   waitForHostedDeployment,
   waitForHostedOperation,
 } from '@/lib/hosted-deployment';
+import {
+  dispatchStoredStructuralRequest,
+  prepareStoredStructuralRequest,
+  type StoredStructuralRequest,
+} from '@/lib/hosted-structural-operation';
 import { cn } from '@/lib/utils';
 
 type OperationPhase =
@@ -46,6 +47,7 @@ type OperationState = {
   phase: OperationPhase;
   label: string;
   startedAt: number;
+  request: StoredStructuralRequest | null;
   receipt: HostedOperationReceipt | null;
   targetSha: string | null;
   destination: string | null;
@@ -96,6 +98,7 @@ const initialState: OperationState = {
   phase: 'idle',
   label: '',
   startedAt: 0,
+  request: null,
   receipt: null,
   targetSha: null,
   destination: null,
@@ -115,9 +118,40 @@ function markDeploymentDelayed(previous: OperationState): OperationState {
 
 function saveSession(state: OperationState) {
   try {
-    if (!state.receipt && !state.targetSha) window.sessionStorage.removeItem(STORAGE_KEY);
-    else window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {}
+    if (!state.request && !state.receipt && !state.targetSha) {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+    } else window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function persistStructuralRequest(state: OperationState) {
+  if (!saveSession(state)) {
+    throw new Error('Studio could not persist the structural request before dispatch.');
+  }
+}
+
+function storedRequest(value: unknown): StoredStructuralRequest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const request = value as Partial<StoredStructuralRequest>;
+  if (
+    request.version !== 1 ||
+    typeof request.label !== 'string' ||
+    typeof request.endpoint !== 'string' ||
+    !['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(request.method)) ||
+    typeof request.operationId !== 'string' ||
+    typeof request.requestHash !== 'string' ||
+    typeof request.expectedDraftSha !== 'string' ||
+    typeof request.expectedMainSha !== 'string' ||
+    !request.body ||
+    typeof request.body !== 'object' ||
+    Array.isArray(request.body)
+  ) {
+    return null;
+  }
+  return request as StoredStructuralRequest;
 }
 
 function readSession(): OperationState | null {
@@ -125,8 +159,9 @@ function readSession(): OperationState | null {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<OperationState>;
+    const request = storedRequest(value.request);
     if (
-      (!value.receipt?.operationId && typeof value.targetSha !== 'string') ||
+      (!request && !value.receipt?.operationId && typeof value.targetSha !== 'string') ||
       typeof value.label !== 'string'
     )
       return null;
@@ -134,6 +169,7 @@ function readSession(): OperationState | null {
       phase: 'restoring',
       label: value.label,
       startedAt: Number(value.startedAt) || Date.now(),
+      request,
       receipt: value.receipt ?? null,
       targetSha: typeof value.targetSha === 'string' ? value.targetSha : null,
       destination: typeof value.destination === 'string' ? value.destination : null,
@@ -143,19 +179,6 @@ function readSession(): OperationState | null {
   } catch {
     return null;
   }
-}
-
-async function parseMutationResponse<T>(response: Response): Promise<T> {
-  const body = (await response.json().catch(() => ({}))) as T & {
-    code?: string;
-    message?: string;
-    error?: string;
-    allowedActions?: string[];
-  };
-  if (!response.ok) {
-    throw new HostedStudioError(body, `Studio request failed with ${response.status}`);
-  }
-  return body;
 }
 
 function phaseFromStatus(state: HostedOperationStatus['state']): OperationPhase {
@@ -193,15 +216,42 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
 
   const waitForStoredOperation = useCallback(
     async (current: OperationState) => {
-      if (!publishConfig || (!current.receipt && !current.targetSha)) return;
+      if (!publishConfig || (!current.request && !current.receipt && !current.targetSha)) return;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      let durable = current;
       try {
-        if (current.receipt) {
+        if (durable.request && !durable.receipt) {
+          const result = await dispatchStoredStructuralRequest<Record<string, unknown>>(
+            durable.request,
+            (request) => {
+              durable = {
+                ...durable,
+                phase: 'saving',
+                request,
+                message: null,
+                allowedActions: [],
+              };
+              setState(durable);
+              persistStructuralRequest(durable);
+            },
+          );
+          durable = {
+            ...durable,
+            phase: 'waiting',
+            receipt: result.operation,
+            targetSha: result.operation.targetMainSha,
+            message: null,
+            allowedActions: [],
+          };
+          setState(durable);
+          saveSession(durable);
+        }
+        if (durable.receipt) {
           const status = await waitForHostedOperation(
             publishConfig.statusEndpoint,
-            current.receipt,
+            durable.receipt,
             {
               signal: controller.signal,
               onPhase: (phase) => {
@@ -213,20 +263,20 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
               },
             },
           );
-          settleReady(status, current);
+          settleReady(status, durable);
           return;
         }
-        const targetSha = current.targetSha;
+        const targetSha = durable.targetSha;
         if (!targetSha) return;
         await waitForHostedDeployment(publishConfig.statusEndpoint, targetSha, {
           signal: controller.signal,
           onDelayed: () => setState(markDeploymentDelayed),
         });
-        const destination = current.destination
-          ? deployedStudioUrl(current.destination, targetSha).toString()
+        const destination = durable.destination
+          ? deployedStudioUrl(durable.destination, targetSha).toString()
           : null;
         const ready = {
-          ...current,
+          ...durable,
           phase: 'ready' as const,
           destination,
           message: null,
@@ -239,13 +289,15 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
         if ((error as Error).name === 'AbortError') return;
         const conflict = error instanceof HostedStudioError && error.code === 'OPERATION_CONFLICT';
         const next: OperationState = {
-          ...current,
+          ...durable,
           phase: conflict ? 'conflict' : 'failed',
           message: String((error as Error).message ?? error),
           allowedActions:
             error instanceof HostedStudioError
               ? error.allowedActions
-              : ['retry-status', 'open-current'],
+              : durable.request && !durable.receipt
+                ? ['retry-request', 'open-current']
+                : ['retry-status', 'open-current'],
         };
         activeRef.current = false;
         setState(next);
@@ -308,6 +360,7 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
         phase: 'saving',
         label: options.label,
         startedAt,
+        request: null,
         receipt: null,
         targetSha: null,
         destination: null,
@@ -321,55 +374,37 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
         assertHostedVersionWritable(version);
         const suppliedBody =
           typeof options.body === 'function' ? options.body(operationId) : options.body;
-        const coordinatedBody = {
-          ...suppliedBody,
-          operationId,
-          expectedDraftSha: version.draftSha,
-          expectedMainSha: version.mainSha,
-        };
-        const requestHash = await authoringRequestHash(
-          options.method,
-          options.endpoint,
-          coordinatedBody,
-        );
-        const response = await fetch(options.endpoint, {
+        const request = await prepareStoredStructuralRequest({
+          label: options.label,
+          endpoint: options.endpoint,
           method: options.method,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            ...coordinatedBody,
-            requestHash,
-          }),
+          protocolKind: options.protocolKind,
+          operationId,
+          version,
+          body: suppliedBody,
         });
-        const rawResult = await parseMutationResponse<T & { operation?: HostedOperationReceipt }>(
-          response,
-        );
-        const operation = rawResult.operation;
-        if (!operation) throw new Error('Studio response did not include an operation receipt');
-        if (
-          operation.operationId !== operationId ||
-          operation.requestHash !== requestHash ||
-          operation.baseDraftSha !== version.draftSha ||
-          operation.baseMainSha !== version.mainSha
-        ) {
-          throw new Error('Studio response did not match the coordinated request');
-        }
-        if (options.protocolKind) {
-          const exact = parseHostedOperationReceipt(operation, {
-            operationId,
-            requestHash,
-            expectedDraftSha: version.draftSha,
-            expectedMainSha: version.mainSha,
-          });
-          if (exact.kind !== options.protocolKind) {
-            throw new Error('Studio response used the wrong authoring operation kind');
-          }
-        }
-        const result = { ...rawResult, operation };
+        const result = await dispatchStoredStructuralRequest<T>(request, (stored) => {
+          const requesting: OperationState = {
+            phase: 'saving',
+            label: options.label,
+            startedAt,
+            request: stored,
+            receipt: null,
+            targetSha: null,
+            destination: null,
+            message: null,
+            allowedActions: [],
+          };
+          durableState = requesting;
+          setState(requesting);
+          persistStructuralRequest(requesting);
+        });
         performance.mark('studio-operation-published');
         const pending: OperationState = {
           phase: 'waiting',
           label: options.label,
           startedAt,
+          request,
           receipt: result.operation,
           targetSha: result.operation.targetMainSha,
           destination: null,
@@ -423,7 +458,11 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
           startedAt,
           message: String((error as Error).message ?? error),
           allowedActions:
-            error instanceof HostedStudioError ? error.allowedActions : ['open-current'],
+            error instanceof HostedStudioError
+              ? error.allowedActions
+              : durableState?.request && !durableState.receipt
+                ? ['retry-request', 'open-current']
+                : ['open-current'],
         };
         activeRef.current = false;
         setState(next);
@@ -474,6 +513,7 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
           phase: 'waiting',
           label: options.label,
           startedAt,
+          request: null,
           receipt: null,
           targetSha,
           destination: rawDestination
@@ -529,7 +569,7 @@ export function HostedOperationProvider({ children }: { children: ReactNode }) {
   );
 
   const retry = useCallback(async () => {
-    if ((!state.receipt && !state.targetSha) || activeRef.current) return;
+    if ((!state.request && !state.receipt && !state.targetSha) || activeRef.current) return;
     activeRef.current = true;
     const next = { ...state, phase: 'waiting' as const, message: null };
     setState(next);
@@ -647,6 +687,12 @@ export function HostedOperationStatusBar({ className }: { className?: string }) 
         <Button size="sm" variant="outline" onClick={() => void retry()}>
           <RotateCw className="size-3.5" />
           Retry status
+        </Button>
+      ) : null}
+      {state.allowedActions.includes('retry-request') && state.request && !state.receipt ? (
+        <Button size="sm" variant="outline" onClick={() => void retry()}>
+          <RotateCw className="size-3.5" />
+          Retry save
         </Button>
       ) : null}
       {state.destination ? (

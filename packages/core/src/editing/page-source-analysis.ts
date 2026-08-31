@@ -148,7 +148,20 @@ function bindingIsUnambiguousAndImmutable(
 ): boolean {
   let conflictingDeclaration = false;
   let mutation = false;
+  let escaped = false;
+  const allowedReferences = new Set<t.Identifier>();
+  if (selected.id.type === 'Identifier') allowedReferences.add(selected.id);
+  for (const statement of ast.program.body) {
+    if (statement.type !== 'ExportDefaultDeclaration') continue;
+    const exported = unwrapPageExpression(statement.declaration);
+    if (exported?.type === 'Identifier' && exported.name === name) {
+      allowedReferences.add(exported);
+    }
+  }
   walk(ast.program, (node) => {
+    if (node.type === 'Identifier' && node.name === name && !allowedReferences.has(node)) {
+      escaped = true;
+    }
     if (node.type === 'VariableDeclarator' && node !== selected) {
       if (identifierPatternName(node.id) === name) conflictingDeclaration = true;
       return;
@@ -198,7 +211,7 @@ function bindingIsUnambiguousAndImmutable(
       }
     }
   });
-  return !conflictingDeclaration && !mutation;
+  return !conflictingDeclaration && !mutation && !escaped;
 }
 
 function resolveArray(ast: t.File): t.ArrayExpression | string {
@@ -228,7 +241,7 @@ function resolveArray(ast: t.File): t.ArrayExpression | string {
   }
   const selected = matches[0].item;
   if (!bindingIsUnambiguousAndImmutable(ast, declaration.name, selected)) {
-    return 'The exported page array binding must not be shadowed, reassigned, or mutated.';
+    return 'The exported page array binding must not be shadowed, reassigned, mutated, aliased, or passed to another function.';
   }
   const initializer = unwrapPageExpression(selected.init);
   if (initializer?.type !== 'ArrayExpression') {
@@ -326,6 +339,9 @@ export function ensurePageFactoryBindingInSource(
   const specifier = localName === 'page' ? 'page' : `page as ${localName}`;
   const importStatement = `import { ${specifier} } from '@open-slide/core';`;
   let insertionPoint = ast.program.interpreter?.end ?? 0;
+  for (const directive of ast.program.directives) {
+    if (typeof directive.end === 'number') insertionPoint = directive.end;
+  }
   for (const statement of ast.program.body) {
     if (statement.type !== 'ImportDeclaration') break;
     if (typeof statement.end === 'number') insertionPoint = statement.end;

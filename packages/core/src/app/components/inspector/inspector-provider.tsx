@@ -20,9 +20,14 @@ import {
   notifyAuthoringChanged,
 } from '@/lib/authoring';
 import { type SlideComment, useComments } from '@/lib/inspector/use-comments';
-import { type Edit, type EditOp, useEditor } from '@/lib/inspector/use-editor';
+import {
+  type Edit,
+  type EditBatchResult,
+  type EditOp,
+  useEditor,
+} from '@/lib/inspector/use-editor';
 import { isTypingTarget } from '@/lib/keys';
-import type { PageId, PageIdentityError } from '@/lib/page-identity';
+import { type PageId, type PageIdentityError, pageIdSource } from '@/lib/page-identity';
 import type { ContentKind } from '@/lib/sdk';
 import { textDiff } from '@/lib/text-diff';
 import { useLocale } from '@/lib/use-locale';
@@ -337,6 +342,7 @@ function rebasePendingSnapshot(current: Bucket, preview: Bucket) {
 
 type InspectorCtx = {
   slideId: string;
+  sourceModule: string | null;
   active: boolean;
   toggle: () => void;
   cancel: () => void;
@@ -397,13 +403,13 @@ export function InspectorProvider({
   const [opsVersion, setOpsVersion] = useState(0);
   const commentsEnabled = kind === 'slide';
   const { comments, error, refetch, add, remove } = useComments(slideId, commentsEnabled);
-  const { runStructuralMutation, structuralLocked } = useHostedOperation();
+  const sourceModule = pageId ? pageIdSource(pageId) : null;
+  const { structuralLocked } = useHostedOperation();
   const { applyEdit: requestEdit, applyEdits } = useEditor(
     slideId,
     kind,
     pageId,
     pageIdentityError,
-    runStructuralMutation,
   );
   const history = useHistory();
 
@@ -1240,6 +1246,7 @@ export function InspectorProvider({
   const value = useMemo<InspectorCtx>(
     () => ({
       slideId,
+      sourceModule,
       active,
       toggle,
       cancel,
@@ -1267,6 +1274,7 @@ export function InspectorProvider({
     }),
     [
       slideId,
+      sourceModule,
       active,
       toggle,
       cancel,

@@ -36,7 +36,7 @@ function normalizeDebugFileName(fileName: string): string {
 
 export function findSlideSource(
   el: HTMLElement,
-  slideId: string,
+  sourceModule: string | null,
   opts?: FindSlideSourceOptions,
 ): SlideSourceHit | null {
   // Primary path: the `data-slide-loc` attribute injected by the
@@ -58,7 +58,8 @@ export function findSlideSource(
 
   // Fallback for JSX rendered from imported component files (which the
   // loc-tags plugin doesn't transform).
-  const needle = `/slides/${slideId}/index.tsx`;
+  if (!sourceModule) return null;
+  const needle = `/${sourceModule.replace(/\\/g, '/')}`;
   let fiber = getFiber(el);
   let anchor: HTMLElement = el;
   while (fiber) {

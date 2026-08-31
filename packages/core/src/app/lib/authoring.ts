@@ -1,4 +1,7 @@
 import config from 'virtual:open-slide/config';
+import { type AuthoringVersionSnapshot, rememberAuthoringVersion } from './authoring-version.ts';
+
+export type { AuthoringVersionSnapshot } from './authoring-version.ts';
 
 /** Local Vite authoring is always available. Production authoring is an
  * explicit host capability because it needs durable, authenticated writes. */
@@ -9,20 +12,13 @@ export const authoringWritable = authoringEnabled && !authoringReadOnly;
 export const AUTHORING_CHANGED_EVENT = 'open-slide:authoring-changed';
 export const AUTHORING_MUTATION_EVENT = 'open-slide:authoring-mutation';
 
-export type AuthoringVersionSnapshot = {
-  draftSha: string;
-  mainSha: string;
-  deployedSha?: string | null;
-  hasDraftChanges: boolean;
-  readOnly?: boolean;
-};
-
 export type AuthoringChangedDetail = {
   version?: AuthoringVersionSnapshot;
   previewingDraft?: boolean;
 };
 
 export function notifyAuthoringChanged(detail?: AuthoringChangedDetail): void {
+  if (detail?.version) rememberAuthoringVersion(detail.version);
   window.dispatchEvent(
     new CustomEvent<AuthoringChangedDetail>(AUTHORING_CHANGED_EVENT, { detail }),
   );

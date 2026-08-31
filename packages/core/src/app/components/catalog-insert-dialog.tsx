@@ -83,17 +83,19 @@ export function CatalogInsertDialog({
         );
       }
       const endpoint = import.meta.env.DEV ? '/__catalog' : catalogConfig.insertEndpoint;
+      const requestBody = {
+        slideId,
+        kind,
+        pageCount,
+        templateId: selectedId,
+        ...(beforePageId ? { beforePageId } : {}),
+        ...(afterPageId ? { afterPageId } : {}),
+      };
       if (import.meta.env.DEV) {
         const insertResponse = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            slideId,
-            beforePageId,
-            afterPageId,
-            templateId: selectedId,
-            kind,
-          }),
+          body: JSON.stringify(requestBody),
         });
         const inserted = (await insertResponse.json().catch(() => ({}))) as { error?: string };
         if (!insertResponse.ok) {
@@ -112,7 +114,7 @@ export function CatalogInsertDialog({
         protocolKind: 'catalog.insert',
         endpoint,
         method: 'POST',
-        body: { slideId, beforePageId, afterPageId, templateId: selectedId, kind },
+        body: requestBody,
         onCommitted: () => {
           setPreparing(false);
           onClose();

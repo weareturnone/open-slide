@@ -65,8 +65,11 @@ type RangeStylePreview = {
   values: StylePreview;
 };
 
-function resolveSelectedTarget(target: SelectedTarget, slideId: string): SelectedTarget {
-  const hit = findSlideSource(target.anchor, slideId, { hostOnly: true });
+function resolveSelectedTarget(
+  target: SelectedTarget,
+  sourceModule: string | null,
+): SelectedTarget {
+  const hit = findSlideSource(target.anchor, sourceModule, { hostOnly: true });
   if (!hit) return target;
   if (hit.line === target.line && hit.column === target.column && hit.anchor === target.anchor) {
     return target;
@@ -78,6 +81,7 @@ export function InspectorPanel() {
   const {
     active,
     slideId,
+    sourceModule,
     selected,
     setSelected,
     bufferOps,
@@ -95,7 +99,7 @@ export function InspectorPanel() {
 
   const deleteSelected = useCallback(async () => {
     if (!selected) return;
-    const target = resolveSelectedTarget(selected, slideId);
+    const target = resolveSelectedTarget(selected, sourceModule);
     try {
       await applyEdit(target.line, target.column, [
         {
@@ -109,7 +113,7 @@ export function InspectorPanel() {
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
     }
-  }, [applyEdit, selected, setSelected, slideId]);
+  }, [applyEdit, selected, setSelected, sourceModule]);
 
   useEffect(() => {
     void selected;
@@ -127,7 +131,7 @@ export function InspectorPanel() {
     }
     let anchor = selected.anchor;
     if (!anchor.isConnected) {
-      const next = findElementByLine(slideId, selected.line, selected.column);
+      const next = findElementByLine(sourceModule, selected.line, selected.column);
       if (next) {
         anchor = next;
         setSelected({ ...selected, anchor: next });
@@ -136,7 +140,7 @@ export function InspectorPanel() {
       }
     }
     setSnapshot(readSnapshot(anchor));
-  }, [selected, setSelected, slideId, reloadCounter, pendingCount, opsVersion]);
+  }, [selected, setSelected, sourceModule, reloadCounter, pendingCount, opsVersion]);
 
   // Freeze slide animations while editing so commits don't replay motion.
   useEffect(() => {
@@ -165,12 +169,12 @@ export function InspectorPanel() {
   const apply = useCallback(
     (ops: EditOp[]) => {
       if (!selected) return;
-      const target = resolveSelectedTarget(selected, slideId);
+      const target = resolveSelectedTarget(selected, sourceModule);
       if (target !== selected) setSelected(target);
       bufferOps(target.line, target.column, target.anchor, ops);
       if (target.anchor.isConnected) setSnapshot(readSnapshot(target.anchor));
     },
-    [selected, setSelected, slideId, bufferOps],
+    [selected, setSelected, sourceModule, bufferOps],
   );
 
   // `pinned` keeps the last selection rendered through the close-out
@@ -207,7 +211,7 @@ export function InspectorPanel() {
     : pinSnapshot;
   const applyTextStyle = (ops: EditOp[]) => {
     const styleOps = ops.flatMap((op) => (op.kind === 'set-style' ? [op] : []));
-    const target = resolveSelectedTarget(pinSelected, slideId);
+    const target = resolveSelectedTarget(pinSelected, sourceModule);
     if (target !== pinSelected) setSelected(target);
     if (
       contentRange &&
@@ -1110,14 +1114,18 @@ function parseLetterSpacing(value: string): number {
   return Number.isFinite(n) ? round2(n) : 0;
 }
 
-function findElementByLine(slideId: string, line: number, column: number): HTMLElement | null {
+function findElementByLine(
+  sourceModule: string | null,
+  line: number,
+  column: number,
+): HTMLElement | null {
   const root = document.querySelector('[data-inspector-root]');
   if (!root) return null;
   const tagged = root.querySelector<HTMLElement>(`[data-slide-loc="${line}:${column}"]`);
   if (tagged) return tagged;
   const candidates = root.querySelectorAll<HTMLElement>('*');
   for (const el of candidates) {
-    const hit = findSlideSource(el, slideId, { hostOnly: true });
+    const hit = findSlideSource(el, sourceModule, { hostOnly: true });
     if (hit && hit.line === line) return hit.anchor;
   }
   return null;

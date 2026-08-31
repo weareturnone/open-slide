@@ -9,8 +9,7 @@ export type AuthoringMutationKind =
   | 'slide.reorder'
   | 'page.duplicate'
   | 'page.delete'
-  | 'catalog.insert'
-  | 'inspector.batch-edit';
+  | 'catalog.insert';
 
 export type AuthoringCoordination = {
   operationId: string;
@@ -22,29 +21,18 @@ export type AuthoringCoordination = {
 type ContentKind = 'slide' | 'document';
 type RequestBase = { kind: AuthoringMutationKind; slideId: string; contentKind: ContentKind };
 export type AuthoringMutationRequest =
-  | (RequestBase & { kind: 'slide.reorder'; pageIds: PageId[] })
+  | (RequestBase & { kind: 'slide.reorder'; pageIds: PageId[]; focusPageId: PageId })
   | (RequestBase & { kind: 'page.duplicate' | 'page.delete'; pageId: PageId })
   | (RequestBase & {
       kind: 'catalog.insert';
       templateId: string;
+      pageCount: number;
       beforePageId?: PageId;
       afterPageId?: PageId;
-    })
-  | (RequestBase & {
-      kind: 'inspector.batch-edit';
-      pageId: PageId;
-      edits: AuthoringInspectorEdit[];
     });
 
 export type ParsedAuthoringMutationRequest = AuthoringMutationRequest & {
   coordination: AuthoringCoordination | null;
-};
-
-export type AuthoringInspectorEdit = {
-  line: number;
-  column: number;
-  ops: Array<Record<string, unknown>>;
-  strict?: boolean;
 };
 
 export type AuthoringProofBase = {
@@ -67,11 +55,6 @@ export type AuthoringOperationProof =
       kind: 'catalog.insert';
       templateId: string;
       createdPageId: PageId;
-    })
-  | (AuthoringProofBase & {
-      kind: 'inspector.batch-edit';
-      editedPageId: PageId;
-      editCount: number;
     });
 
 export type HostedOperationReceipt = {
@@ -151,6 +134,13 @@ function optionalPageId(value: unknown, subject: string): PageId | undefined {
   }
 }
 
+function nonNegativeInteger(value: unknown, subject: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0) {
+    throw new Error(`${subject} must be a non-negative integer`);
+  }
+  return value as number;
+}
+
 function coordination(
   body: Record<string, unknown>,
   hosted: boolean,
@@ -175,35 +165,6 @@ function coordination(
   };
 }
 
-function inspectorEdits(value: unknown): AuthoringInspectorEdit[] {
-  if (!Array.isArray(value) || value.length === 0)
-    throw new Error('edits must be a non-empty array');
-  return value.map((raw, index) => {
-    const edit = record(raw, `edits[${index}]`);
-    if (!Number.isInteger(edit.line) || (edit.line as number) < 1) {
-      throw new Error(`edits[${index}].line is invalid`);
-    }
-    if (!Number.isInteger(edit.column) || (edit.column as number) < 0) {
-      throw new Error(`edits[${index}].column is invalid`);
-    }
-    if (!Array.isArray(edit.ops) || edit.ops.length === 0) {
-      throw new Error(`edits[${index}].ops is invalid`);
-    }
-    const ops = edit.ops.map((operation, operationIndex) =>
-      record(operation, `edits[${index}].ops[${operationIndex}]`),
-    );
-    if (edit.strict !== undefined && typeof edit.strict !== 'boolean') {
-      throw new Error(`edits[${index}].strict is invalid`);
-    }
-    return {
-      line: edit.line as number,
-      column: edit.column as number,
-      ops,
-      ...(edit.strict === undefined ? {} : { strict: edit.strict as boolean }),
-    };
-  });
-}
-
 export function parseAuthoringMutationRequest(
   mutationKind: AuthoringMutationKind,
   value: unknown,
@@ -221,29 +182,33 @@ export function parseAuthoringMutationRequest(
     }
     const pageIds = body.pageIds.map(pageId);
     if (new Set(pageIds).size !== pageIds.length) throw new Error('pageIds must be unique');
-    return { ...base, kind: mutationKind, pageIds };
+    const focusPageId = pageId(body.focusPageId);
+    if (!pageIds.includes(focusPageId)) throw new Error('focusPageId must occur in pageIds');
+    return { ...base, kind: mutationKind, pageIds, focusPageId };
   }
   if (mutationKind === 'page.duplicate' || mutationKind === 'page.delete') {
     return { ...base, kind: mutationKind, pageId: pageId(body.pageId) };
   }
   if (mutationKind === 'catalog.insert') {
+    const pageCount = nonNegativeInteger(body.pageCount, 'pageCount');
     const beforePageId = optionalPageId(body.beforePageId, 'beforePageId');
     const afterPageId = optionalPageId(body.afterPageId, 'afterPageId');
-    if (!beforePageId && !afterPageId) throw new Error('an insertion boundary is required');
+    if (pageCount === 0 && (beforePageId || afterPageId)) {
+      throw new Error('an empty catalog target cannot have an insertion boundary');
+    }
+    if (pageCount > 0 && !beforePageId && !afterPageId) {
+      throw new Error('an insertion boundary is required');
+    }
     return {
       ...base,
       kind: mutationKind,
       templateId: requiredString(body.templateId, 'templateId'),
-      ...(beforePageId ? { beforePageId } : {}),
-      ...(afterPageId ? { afterPageId } : {}),
+      pageCount,
+      beforePageId,
+      afterPageId,
     };
   }
-  return {
-    ...base,
-    kind: mutationKind,
-    pageId: pageId(body.pageId),
-    edits: inspectorEdits(body.edits),
-  };
+  throw new Error('Unsupported authoring mutation kind');
 }
 
 function canonicalJson(value: unknown): string {
@@ -306,6 +271,7 @@ function proof(value: unknown, expectedKind: AuthoringMutationKind): AuthoringOp
   const sourceModule = requiredString(body.sourceModule, 'proof.sourceModule');
   pageIdSource(`${sourceModule}#proof`);
   const pageIds = pageIdArray(body.pageIds, 'proof.pageIds');
+  if (new Set(pageIds).size !== pageIds.length) throw new Error('proof.pageIds must be unique');
   const focusPageId = body.focusPageId === null ? null : pageId(body.focusPageId);
   const resolvedPageIndex =
     body.resolvedPageIndex === null
@@ -342,20 +308,119 @@ function proof(value: unknown, expectedKind: AuthoringMutationKind): AuthoringOp
       createdPageId: pageId(body.createdPageId),
     };
   }
-  if (!Number.isInteger(body.editCount) || (body.editCount as number) < 1) {
-    throw new Error('proof.editCount is invalid');
+  throw new Error('Unsupported authoring proof kind');
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function expectedSourceModule(request: ParsedAuthoringMutationRequest): string {
+  const directory = request.contentKind === 'document' ? 'documents' : 'slides';
+  const escapedSlideId = request.slideId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${directory}/${escapedSlideId}/index\\.(?:tsx|jsx|ts|js)$`);
+  const requestPageIds =
+    request.kind === 'slide.reorder'
+      ? request.pageIds
+      : 'pageId' in request
+        ? [request.pageId]
+        : [request.beforePageId, request.afterPageId].filter(
+            (value): value is PageId => value !== undefined,
+          );
+  const sources = new Set(requestPageIds.map(pageIdSource));
+  if (sources.size > 1) throw new Error('Request page identities span multiple source modules');
+  const source = sources.values().next().value as string | undefined;
+  const resolved = source ?? `${directory}/${request.slideId}/index.tsx`;
+  if (!pattern.test(resolved)) {
+    throw new Error('Request page identities do not belong to the requested artifact');
   }
-  return {
-    ...base,
-    kind: expectedKind,
-    editedPageId: pageId(body.editedPageId),
-    editCount: body.editCount as number,
-  };
+  return resolved;
+}
+
+function assertReceiptMatchesRequest(
+  receipt: HostedOperationReceipt,
+  request: ParsedAuthoringMutationRequest,
+) {
+  if (receipt.kind !== request.kind) {
+    throw new Error('Operation receipt kind does not match the original request');
+  }
+  if (receipt.artifactId !== request.slideId) {
+    throw new Error('Operation receipt artifact does not match the original request');
+  }
+  const requestSource = expectedSourceModule(request);
+  const proofSource = receipt.proof.sourceModule;
+  if (request.kind === 'catalog.insert' && request.pageCount === 0) {
+    const directory = request.contentKind === 'document' ? 'documents' : 'slides';
+    const escapedSlideId = request.slideId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (
+      !new RegExp(`^${directory}/${escapedSlideId}/index\\.(?:tsx|jsx|ts|js)$`).test(proofSource)
+    ) {
+      throw new Error('Operation proof source does not match the original request');
+    }
+  } else if (proofSource !== requestSource) {
+    throw new Error('Operation proof source does not match the original request');
+  }
+  if (receipt.proof.pageIds.some((id) => pageIdSource(id) !== proofSource)) {
+    throw new Error('Operation proof page identities do not match its source module');
+  }
+  if (receipt.proof.focusPageId === null) {
+    if (receipt.proof.resolvedPageIndex !== null) {
+      throw new Error('Operation proof index cannot resolve a missing focus page');
+    }
+  } else {
+    const index = receipt.proof.pageIds.indexOf(receipt.proof.focusPageId);
+    if (index < 0 || index !== receipt.proof.resolvedPageIndex) {
+      throw new Error('Operation proof focus page and resolved index disagree');
+    }
+  }
+
+  if (request.kind === 'slide.reorder' && receipt.proof.kind === 'slide.reorder') {
+    if (
+      !arraysEqual(receipt.proof.pageIds, request.pageIds) ||
+      !arraysEqual(receipt.proof.orderedPageIds, request.pageIds) ||
+      receipt.proof.focusPageId !== request.focusPageId
+    ) {
+      throw new Error('Reorder proof does not match the original request');
+    }
+    return;
+  }
+  if (request.kind === 'page.duplicate' && receipt.proof.kind === 'page.duplicate') {
+    if (
+      receipt.proof.sourcePageId !== request.pageId ||
+      receipt.proof.focusPageId !== receipt.proof.createdPageId ||
+      !receipt.proof.pageIds.includes(receipt.proof.createdPageId)
+    ) {
+      throw new Error('Duplicate proof does not match the original request');
+    }
+    return;
+  }
+  if (request.kind === 'page.delete' && receipt.proof.kind === 'page.delete') {
+    if (
+      receipt.proof.deletedPageId !== request.pageId ||
+      receipt.proof.pageIds.includes(receipt.proof.deletedPageId)
+    ) {
+      throw new Error('Delete proof does not match the original request');
+    }
+    return;
+  }
+  if (request.kind === 'catalog.insert' && receipt.proof.kind === 'catalog.insert') {
+    if (
+      receipt.proof.templateId !== request.templateId ||
+      receipt.proof.pageIds.length !== request.pageCount + 1 ||
+      receipt.proof.focusPageId !== receipt.proof.createdPageId ||
+      !receipt.proof.pageIds.includes(receipt.proof.createdPageId)
+    ) {
+      throw new Error('Catalog proof does not match the original request');
+    }
+    return;
+  }
+  throw new Error('Operation proof does not match the original request');
 }
 
 export function parseHostedOperationReceipt(
   value: unknown,
   expected?: AuthoringCoordination,
+  request?: ParsedAuthoringMutationRequest,
 ): HostedOperationReceipt {
   const body = record(value, 'operation receipt');
   if (body.version !== 1) throw new Error('Operation receipt version is unsupported');
@@ -375,8 +440,7 @@ export function parseHostedOperationReceipt(
     kind !== 'slide.reorder' &&
     kind !== 'page.duplicate' &&
     kind !== 'page.delete' &&
-    kind !== 'catalog.insert' &&
-    kind !== 'inspector.batch-edit'
+    kind !== 'catalog.insert'
   ) {
     throw new Error('Operation receipt kind is invalid');
   }
@@ -391,7 +455,7 @@ export function parseHostedOperationReceipt(
   const createdAt = requiredString(body.createdAt, 'operation.createdAt');
   if (!Number.isFinite(Date.parse(createdAt)))
     throw new Error('Operation receipt timestamp is invalid');
-  return {
+  const receipt: HostedOperationReceipt = {
     version: 1,
     operationId,
     requestHash,
@@ -404,6 +468,31 @@ export function parseHostedOperationReceipt(
     proof: proof(body.proof, kind),
     createdAt,
   };
+  if (request) assertReceiptMatchesRequest(receipt, request);
+  return receipt;
+}
+
+export function duplicateResultPageIndex(
+  receipt: HostedOperationReceipt,
+  result: Record<string, unknown>,
+): number {
+  if (receipt.kind !== 'page.duplicate' || receipt.proof.kind !== 'page.duplicate') {
+    throw new Error('An authoritative duplicate receipt is required');
+  }
+  let resultPageId: PageId;
+  try {
+    resultPageId = pageId(result.pageId);
+  } catch {
+    throw new Error('Duplicate result did not include a valid authoritative page id');
+  }
+  if (resultPageId !== receipt.proof.createdPageId) {
+    throw new Error('Duplicate result authoritative page id does not match its proof');
+  }
+  const index = receipt.proof.pageIds.indexOf(resultPageId);
+  if (index < 0 || index !== receipt.proof.resolvedPageIndex) {
+    throw new Error('Duplicate authoritative page id does not resolve to the proof index');
+  }
+  return index;
 }
 
 export type StoredAuthoringOperation =

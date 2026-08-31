@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertHostedVersionWritable, waitForHostedDeployment } from './hosted-deployment.ts';
+import {
+  assertHostedVersionWritable,
+  parseHostedOperationStatus,
+  waitForHostedDeployment,
+} from './hosted-deployment.ts';
 
 describe('assertHostedVersionWritable', () => {
   it('fails closed on server-reported read-only status', () => {
@@ -282,5 +286,73 @@ describe('waitForHostedDeployment', () => {
     });
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     await rejection;
+  });
+});
+
+describe('parseHostedOperationStatus', () => {
+  const targetSha = 'c'.repeat(40);
+  const receipt = {
+    version: 1 as const,
+    operationId: '7dc1b749-ff9f-4d7c-a150-7c4f2f2868a2',
+    requestHash: `sha256:${'d'.repeat(64)}`,
+    kind: 'page.delete',
+    artifactId: 'deck',
+    baseDraftSha: 'a'.repeat(40),
+    baseMainSha: 'b'.repeat(40),
+    draftCommitSha: targetSha,
+    targetMainSha: targetSha,
+    proof: {
+      version: 1,
+      kind: 'page.delete',
+      sourceModule: 'slides/deck/index.tsx',
+      pageIds: ['slides/deck/index.tsx#remaining'],
+      focusPageId: 'slides/deck/index.tsx#remaining',
+      resolvedPageIndex: 0,
+      deletedPageId: 'slides/deck/index.tsx#deleted',
+    },
+    createdAt: '2026-08-31T00:00:00.000Z',
+  };
+
+  function readyStatus() {
+    return {
+      ok: true,
+      state: 'ready',
+      operation: receipt,
+      draftSha: targetSha,
+      mainSha: targetSha,
+      deployedSha: targetSha,
+      relation: 'exact',
+      proof: { ok: true, resolvedPageIndex: 0 },
+      resolvedPageIndex: 0,
+      allowedActions: [],
+    };
+  }
+
+  it('rejects a status response for another operation', () => {
+    expect(() =>
+      parseHostedOperationStatus(
+        {
+          ...readyStatus(),
+          operation: { ...receipt, operationId: 'e9fce057-c97d-4db8-bc20-a783b4c7c997' },
+        },
+        receipt,
+      ),
+    ).toThrow(/operation/i);
+  });
+
+  it('rejects malformed ready state instead of treating it as deployed', () => {
+    const malformed = [
+      { ...readyStatus(), relation: 'pending' },
+      { ...readyStatus(), deployedSha: null },
+      { ...readyStatus(), proof: { ok: false, resolvedPageIndex: 0 } },
+      { ...readyStatus(), resolvedPageIndex: 1 },
+    ];
+    for (const status of malformed) {
+      expect(() => parseHostedOperationStatus(status, receipt)).toThrow(/ready|proof|index/i);
+    }
+  });
+
+  it('accepts a ready status bound to the exact receipt and proof', () => {
+    expect(parseHostedOperationStatus(readyStatus(), receipt)).toEqual(readyStatus());
   });
 });

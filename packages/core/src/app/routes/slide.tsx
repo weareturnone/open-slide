@@ -77,6 +77,7 @@ import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/s
 import { SlideTransitionLayer } from '../components/slide-transition-layer';
 import { type ThumbnailActions, ThumbnailRail } from '../components/thumbnail-rail';
 import { authoringEnabled, authoringWritable, notifyAuthoringChanged } from '../lib/authoring';
+import { duplicateResultPageIndex, parseHostedOperationReceipt } from '../lib/authoring-protocol';
 import { exportSlideAsHtml } from '../lib/export-html';
 import { exportSlideAsPdf, isSafari, type PdfExportProgress } from '../lib/export-pdf';
 import { exportSlideAsImagePptx, type PptxExportProgress } from '../lib/export-pptx';
@@ -230,6 +231,8 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
+              slideId,
+              kind,
               pageIds: orderedPageIds,
               focusPageId: currentPageIds[index],
             }),
@@ -246,7 +249,12 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
           protocolKind: 'slide.reorder',
           endpoint: `/__slides/${encodeURIComponent(slideId)}/reorder${kindQuery}`,
           method: 'PUT',
-          body: { pageIds: orderedPageIds, focusPageId: currentPageIds[index] },
+          body: {
+            slideId,
+            kind,
+            pageIds: orderedPageIds,
+            focusPageId: currentPageIds[index],
+          },
           destination: () => {
             const url = new URL(window.location.href);
             url.searchParams.set('p', String(nextIndex + 1));
@@ -269,7 +277,17 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
         toast.error(`Reorder failed: ${String((err as Error).message ?? err)}`);
       }
     },
-    [pages, pageIdentityError, index, slideId, goTo, kindQuery, runStructuralMutation, isDocument],
+    [
+      pages,
+      pageIdentityError,
+      index,
+      slideId,
+      goTo,
+      kind,
+      kindQuery,
+      runStructuralMutation,
+      isDocument,
+    ],
   );
 
   const duplicatePage = useCallback(
@@ -298,7 +316,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
             {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ pageId: currentPageIds[i] }),
+              body: JSON.stringify({ slideId, kind, pageId: currentPageIds[i] }),
             },
           );
           if (!res.ok) {
@@ -309,20 +327,33 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
           toast.success(format(t.thumbnailRail.toastDuplicated, { n: i + 1 }));
           return;
         }
-        const hosted = await runStructuralMutation<Record<string, unknown>>({
+        const hosted = await runStructuralMutation<{ pageId?: unknown }>({
           label: `Duplicate ${isDocument ? 'page' : 'slide'}`,
           protocolKind: 'page.duplicate',
           endpoint: `/__slides/${encodeURIComponent(slideId)}/pages/duplicate${kindQuery}`,
           method: 'POST',
-          body: { pageId: currentPageIds[i] },
-          destination: () => {
+          body: { slideId, kind, pageId: currentPageIds[i] },
+          destination: (result, status) => {
+            const receipt = parseHostedOperationReceipt(status.operation);
+            const authoritativeIndex = duplicateResultPageIndex(receipt, result);
             const url = new URL(window.location.href);
-            url.searchParams.set('p', String(i + 2));
+            url.searchParams.set('p', String(authoritativeIndex + 1));
             return url;
           },
         });
+        const receipt = parseHostedOperationReceipt(hosted.status.operation);
+        const authoritativeIndex = duplicateResultPageIndex(receipt, hosted.result);
+        if (receipt.proof.kind !== 'page.duplicate') {
+          throw new Error('Duplicate operation returned the wrong proof kind');
+        }
+        const createdPageId = receipt.proof.createdPageId;
+        setPages((current) => {
+          const updated = [...current];
+          updated[i + 1] = copyResolvedPage(before[i], createdPageId);
+          return updated;
+        });
         const url = new URL(window.location.href);
-        url.searchParams.set('p', String((hosted.status.resolvedPageIndex ?? i + 1) + 1));
+        url.searchParams.set('p', String(authoritativeIndex + 1));
         window.location.assign(
           deployedStudioUrl(
             url,
@@ -342,6 +373,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       index,
       slideId,
       goTo,
+      kind,
       kindQuery,
       t.thumbnailRail,
       pageIdentityError,
@@ -375,7 +407,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
           const res = await fetch(`/__slides/${encodeURIComponent(slideId)}/pages${kindQuery}`, {
             method: 'DELETE',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ pageId: currentPageIds[i] }),
+            body: JSON.stringify({ slideId, kind, pageId: currentPageIds[i] }),
           });
           if (!res.ok) {
             const detail = await res.json().catch(() => ({ error: res.statusText }));
@@ -391,7 +423,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
           protocolKind: 'page.delete',
           endpoint: `/__slides/${encodeURIComponent(slideId)}/pages${kindQuery}`,
           method: 'DELETE',
-          body: { pageId: currentPageIds[i] },
+          body: { slideId, kind, pageId: currentPageIds[i] },
           destination: () => {
             const url = new URL(window.location.href);
             url.searchParams.set('p', String(focusIndex + 1));
@@ -419,6 +451,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       index,
       slideId,
       goTo,
+      kind,
       kindQuery,
       t.thumbnailRail,
       pageIdentityError,

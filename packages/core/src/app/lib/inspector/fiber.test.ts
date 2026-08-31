@@ -61,7 +61,7 @@ afterAll(() => {
 describe('findSlideSource primary path', () => {
   it('reads line:column from data-slide-loc', () => {
     const el = makeEl({ slideLoc: '42:7' });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).not.toBeNull();
     expect(hit?.line).toBe(42);
     expect(hit?.column).toBe(7);
@@ -78,7 +78,7 @@ describe('findSlideSource fallback', () => {
       host: true,
     });
     const el = makeEl({ fiber });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).not.toBeNull();
     expect(hit?.line).toBe(10);
     expect(hit?.column).toBe(4);
@@ -92,7 +92,7 @@ describe('findSlideSource fallback', () => {
       host: true,
     });
     const el = makeEl({ fiber });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).not.toBeNull();
     expect(hit?.line).toBe(11);
     expect(hit?.column).toBe(2);
@@ -106,7 +106,7 @@ describe('findSlideSource fallback', () => {
       host: true,
     });
     const el = makeEl({ fiber });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).not.toBeNull();
     expect(hit?.line).toBe(12);
   });
@@ -119,7 +119,7 @@ describe('findSlideSource fallback', () => {
       host: true,
     });
     const el = makeEl({ fiber });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).not.toBeNull();
     expect(hit?.line).toBe(13);
     expect(hit?.column).toBe(1);
@@ -133,7 +133,7 @@ describe('findSlideSource fallback', () => {
       host: true,
     });
     const el = makeEl({ fiber });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).toBeNull();
   });
 
@@ -146,9 +146,20 @@ describe('findSlideSource fallback', () => {
     });
     const leaf = makeFiber({ parent, host: true });
     const el = makeEl({ fiber: leaf });
-    const hit = findSlideSource(el as unknown as HTMLElement, 'cover');
+    const hit = findSlideSource(el as unknown as HTMLElement, 'slides/cover/index.tsx');
     expect(hit).not.toBeNull();
     expect(hit?.line).toBe(99);
     expect(hit?.column).toBe(3);
+  });
+
+  it.each([
+    ['documents/report/index.jsx', '/repo/documents/report/index.jsx'],
+    ['slides/deck/index.ts', '/repo/slides/deck/index.ts'],
+    ['slides/deck/index.js', 'C:\\repo\\slides\\deck\\index.js'],
+  ])('matches the actual %s source module', (sourceModule, fileName) => {
+    const fiber = makeFiber({ fileName, line: 21, column: 5, host: true });
+    const hit = findSlideSource(makeEl({ fiber }) as unknown as HTMLElement, sourceModule);
+
+    expect(hit).toMatchObject({ line: 21, column: 5 });
   });
 });

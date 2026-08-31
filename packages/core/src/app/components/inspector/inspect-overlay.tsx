@@ -21,7 +21,8 @@ const FRAME_MORPH_MS = 180;
 const LAYOUT_TRACK_MS = PANEL_TRANSITION_MS + FRAME_MORPH_MS;
 
 export function InspectOverlay() {
-  const { active, slideId, selected, setSelected, cancel, openCrop, inlineEdit } = useInspector();
+  const { active, sourceModule, selected, setSelected, cancel, openCrop, inlineEdit } =
+    useInspector();
   const overlayRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Highlight | null>(null);
 
@@ -46,7 +47,7 @@ export function InspectOverlay() {
       if (inlineEdit?.anchor.contains(e.target as Node)) return setHover(null);
       const el = pickInspectorTarget(pickElement(e.clientX, e.clientY));
       if (!el) return setHover(null);
-      const hit = findSlideSource(el, slideId, { hostOnly: true });
+      const hit = findSlideSource(el, sourceModule, { hostOnly: true });
       if (!hit) return setHover(null);
       setHover({ hit });
     };
@@ -57,7 +58,7 @@ export function InspectOverlay() {
       if (inlineEdit?.anchor.contains(e.target as Node)) return;
       const el = pickInspectorTarget(pickElement(e.clientX, e.clientY));
       if (!el) return;
-      const hit = findSlideSource(el, slideId, { hostOnly: true });
+      const hit = findSlideSource(el, sourceModule, { hostOnly: true });
       if (!hit) return;
       e.preventDefault();
       e.stopPropagation();
@@ -70,7 +71,7 @@ export function InspectOverlay() {
       if (inlineEdit?.anchor.contains(e.target as Node)) return;
       const el = pickInspectorTarget(pickElement(e.clientX, e.clientY));
       if (!el) return;
-      const hit = findSlideSource(el, slideId, { hostOnly: true });
+      const hit = findSlideSource(el, sourceModule, { hostOnly: true });
       if (!hit) return;
       if (!(hit.anchor instanceof HTMLImageElement)) return;
       e.preventDefault();
@@ -89,7 +90,7 @@ export function InspectOverlay() {
       window.removeEventListener('dblclick', onDblClick, true);
       window.removeEventListener('keydown', onKey, true);
     };
-  }, [active, slideId, setSelected, cancel, openCrop, inlineEdit]);
+  }, [active, sourceModule, setSelected, cancel, openCrop, inlineEdit]);
 
   const hoverAnchor = hover?.hit.anchor.isConnected ? hover.hit.anchor : null;
   const selectedAnchor = selected?.anchor.isConnected ? selected.anchor : null;
