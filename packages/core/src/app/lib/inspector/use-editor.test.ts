@@ -7,6 +7,7 @@ import {
 import {
   currentPageIdOrThrow,
   expectedInspectorHeadOrThrow,
+  resolveExpectedInspectorHead,
   submitInspectorEdit,
   submitInspectorEditBatch,
 } from './use-editor.ts';
@@ -162,5 +163,32 @@ describe('inspector edit transport', () => {
     expect(() => expectedInspectorHeadOrThrow(true, null)).toThrow(/draft head is unavailable/i);
     expect(expectedInspectorHeadOrThrow(false, null)).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reads the hosted version once when Save races initial status hydration', async () => {
+    const readVersion = vi.fn(async () => ({
+      draftSha,
+      mainSha,
+      deployedSha: mainSha,
+      hasDraftChanges: false,
+    }));
+
+    await expect(resolveExpectedInspectorHead(true, null, readVersion)).resolves.toBe(draftSha);
+    expect(readVersion).toHaveBeenCalledOnce();
+  });
+
+  it('does not read hosted status for local authoring or an already cached head', async () => {
+    const readVersion = vi.fn();
+    const version = { draftSha, mainSha, deployedSha: mainSha, hasDraftChanges: false };
+
+    await expect(resolveExpectedInspectorHead(false, null, readVersion)).resolves.toBeUndefined();
+    await expect(resolveExpectedInspectorHead(true, version, readVersion)).resolves.toBe(draftSha);
+    expect(readVersion).not.toHaveBeenCalled();
+  });
+
+  it('still fails closed when hosted status cannot be read', async () => {
+    await expect(resolveExpectedInspectorHead(true, null, null)).rejects.toThrow(
+      /draft head is unavailable/i,
+    );
   });
 });

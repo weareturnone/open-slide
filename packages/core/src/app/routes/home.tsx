@@ -231,7 +231,13 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
           <div className="ml-auto flex w-full items-center gap-2 md:w-auto">
             <HostedPublishButton />
             {config.authoring?.decks && (
-              <Button size="sm" variant="brand" onClick={() => setNewDeckOpen(true)}>
+              <Button
+                size="sm"
+                variant="brand"
+                disabled={!authoringWritable}
+                title={!authoringWritable ? 'This preview is read-only.' : undefined}
+                onClick={() => setNewDeckOpen(true)}
+              >
                 <Plus className="size-3.5" />
                 New {isDocuments ? 'document' : 'deck'}
               </Button>

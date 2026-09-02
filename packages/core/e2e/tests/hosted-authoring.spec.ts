@@ -259,15 +259,8 @@ test.describe('hosted authoring adapters', () => {
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Publish all' })).toBeDisabled();
 
-    await page.getByRole('button', { name: 'New deck' }).click();
-    await page.getByLabel('Title').fill('Blocked but valid');
-    await expect(page.getByLabel('Deck ID')).toHaveValue('blocked-but-valid');
-    const template = page.getByRole('radio', { name: /Statement/ });
-    await expect(template).toBeChecked();
-    await expect(template).toBeDisabled();
-    const create = page.getByRole('button', { name: 'Create deck' });
-    await expect(create).toBeDisabled();
-    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('button', { name: 'New deck' })).toBeDisabled();
+    await expect(page.getByRole('dialog', { name: 'New deck' })).toHaveCount(0);
 
     const alphaCard = page.locator('li').filter({
       has: page.getByRole('heading', { name: 'Alpha Deck' }),

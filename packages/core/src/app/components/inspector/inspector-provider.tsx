@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import {
   AUTHORING_MUTATION_EVENT,
   authoringEnabled,
+  authoringStatusEndpoint,
   authoringWritable,
   notifyAuthoringChanged,
 } from '@/lib/authoring';
@@ -405,6 +406,7 @@ export function InspectorProvider({
     kind,
     pageId,
     pageIdentityError,
+    authoringStatusEndpoint,
   );
   const history = useHistory();
 

@@ -4,6 +4,7 @@ import {
   currentAuthoringVersion,
   rememberAuthoringVersion,
 } from '../authoring-version';
+import { fetchHostedVersion } from '../hosted-deployment';
 import {
   type PageId,
   type PageIdentityError,
@@ -120,6 +121,16 @@ export function expectedInspectorHeadOrThrow(
   return version.draftSha;
 }
 
+export async function resolveExpectedInspectorHead(
+  hosted: boolean,
+  version: AuthoringVersionSnapshot | null = currentAuthoringVersion(),
+  readVersion: (() => Promise<AuthoringVersionSnapshot>) | null = null,
+): Promise<string | undefined> {
+  if (!hosted) return undefined;
+  const resolvedVersion = version ?? (readVersion ? await readVersion() : null);
+  return expectedInspectorHeadOrThrow(true, resolvedVersion);
+}
+
 export async function submitInspectorEdit(
   request: InspectorEditRequest,
 ): Promise<AuthoringVersionSnapshot | undefined> {
@@ -152,6 +163,7 @@ export function useEditor(
   kind: ContentKind = 'slide',
   pageId: PageId | null = null,
   pageIdentityError: PageIdentityError | null = null,
+  publishStatusEndpoint: string | null = null,
 ) {
   const currentPageId = useCallback(
     (): PageId => currentPageIdOrThrow(pageId, pageIdentityError),
@@ -161,7 +173,12 @@ export function useEditor(
   const applyEdit = useCallback(
     async (line: number, column: number, ops: EditOp[]) => {
       const identity = currentPageId();
-      const expectedHead = expectedInspectorHeadOrThrow(!import.meta.env.DEV);
+      const hosted = !import.meta.env.DEV;
+      const expectedHead = await resolveExpectedInspectorHead(
+        hosted,
+        currentAuthoringVersion(),
+        hosted && publishStatusEndpoint ? () => fetchHostedVersion(publishStatusEndpoint) : null,
+      );
       return submitInspectorEdit({
         slideId,
         kind,
@@ -172,7 +189,7 @@ export function useEditor(
         ops,
       });
     },
-    [slideId, kind, currentPageId],
+    [slideId, kind, currentPageId, publishStatusEndpoint],
   );
 
   // Batch many element edits into one file write and one HMR tick.
@@ -182,7 +199,12 @@ export function useEditor(
     async (edits: Edit[]): Promise<EditBatchResult> => {
       if (edits.length === 0) return { results: [] };
       const identity = currentPageId();
-      const expectedHead = expectedInspectorHeadOrThrow(!import.meta.env.DEV);
+      const hosted = !import.meta.env.DEV;
+      const expectedHead = await resolveExpectedInspectorHead(
+        hosted,
+        currentAuthoringVersion(),
+        hosted && publishStatusEndpoint ? () => fetchHostedVersion(publishStatusEndpoint) : null,
+      );
       return submitInspectorEditBatch({
         slideId,
         kind,
@@ -191,7 +213,7 @@ export function useEditor(
         edits,
       });
     },
-    [slideId, kind, currentPageId],
+    [slideId, kind, currentPageId, publishStatusEndpoint],
   );
 
   return { applyEdit, applyEdits };

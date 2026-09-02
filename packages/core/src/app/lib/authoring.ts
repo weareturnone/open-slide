@@ -8,6 +8,7 @@ export type { AuthoringVersionSnapshot } from './authoring-version.ts';
 export const authoringEnabled = import.meta.env.DEV || config.authoring?.enabled === true;
 export const authoringReadOnly = !import.meta.env.DEV && config.authoring?.readOnly === true;
 export const authoringWritable = authoringEnabled && !authoringReadOnly;
+export const authoringStatusEndpoint = config.authoring?.publish?.statusEndpoint ?? null;
 
 export const AUTHORING_CHANGED_EVENT = 'open-slide:authoring-changed';
 export const AUTHORING_MUTATION_EVENT = 'open-slide:authoring-mutation';
