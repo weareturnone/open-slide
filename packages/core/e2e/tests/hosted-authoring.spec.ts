@@ -66,9 +66,12 @@ type MockVersionState = {
   readOnly?: boolean;
 };
 
+type FixtureOperationReceipt = ReturnType<typeof operationReceipt>;
+
 async function mockVersionStatus(
   page: Page,
   state: MockVersionState | (() => MockVersionState) = {},
+  receipts: Map<string, FixtureOperationReceipt> = new Map(),
 ): Promise<void> {
   await page.route('**/studio/status**', async (route) => {
     const url = new URL(route.request().url());
@@ -81,7 +84,7 @@ async function mockVersionStatus(
       await fulfillJson(route, {
         ok: true,
         state: 'ready',
-        operation: operationReceipt(operationId, 'fixture'),
+        operation: receipts.get(operationId),
         draftSha: DRAFT_SHA,
         mainSha: TARGET_SHA,
         deployedSha: TARGET_SHA,
@@ -103,17 +106,19 @@ async function mockVersionStatus(
   });
 }
 
-function operationReceipt(operationId: string, artifactId: string) {
+function operationReceipt(operationId: string, artifactId: string, requestHash: string) {
   return {
     version: 1,
     operationId,
-    requestHash: `request-${operationId}`,
+    requestHash,
     kind: 'structural-fixture',
     artifactId,
+    baseDraftSha: DRAFT_SHA,
     baseMainSha: MAIN_SHA,
     draftCommitSha: DRAFT_SHA,
     targetMainSha: TARGET_SHA,
     proof: {},
+    createdAt: '2026-08-31T00:00:00.000Z',
   };
 }
 
@@ -121,7 +126,8 @@ test.describe('hosted authoring adapters', () => {
   test('routes catalog and deck creation through configured endpoints with a durable receipt', async ({
     page,
   }) => {
-    await mockVersionStatus(page);
+    const receipts = new Map<string, FixtureOperationReceipt>();
+    await mockVersionStatus(page, {}, receipts);
     const catalogRequests: URL[] = [];
     const createBodies: Record<string, unknown>[] = [];
 
@@ -141,8 +147,14 @@ test.describe('hosted authoring adapters', () => {
     await page.route('**/studio/decks', async (route) => {
       const createBody = route.request().postDataJSON() as Record<string, unknown>;
       createBodies.push(createBody);
+      const receipt = operationReceipt(
+        String(createBody.operationId),
+        String(createBody.deckId),
+        String(createBody.requestHash),
+      );
+      receipts.set(receipt.operationId, receipt);
       await fulfillJson(route, {
-        operation: operationReceipt(String(createBody.operationId), String(createBody.deckId)),
+        operation: receipt,
       });
     });
 
@@ -185,15 +197,22 @@ test.describe('hosted authoring adapters', () => {
   test('routes structural operations through the host contract with optimistic heads', async ({
     page,
   }) => {
-    await mockVersionStatus(page);
+    const receipts = new Map<string, FixtureOperationReceipt>();
+    await mockVersionStatus(page, {}, receipts);
     const duplicateBodies: Record<string, unknown>[] = [];
 
     await page.route('**/__slides/alpha/duplicate', async (route) => {
       const duplicateBody = route.request().postDataJSON() as Record<string, unknown>;
       duplicateBodies.push(duplicateBody);
+      const receipt = operationReceipt(
+        String(duplicateBody.operationId),
+        String(duplicateBody.newId),
+        String(duplicateBody.requestHash),
+      );
+      receipts.set(receipt.operationId, receipt);
       await fulfillJson(route, {
         slideId: duplicateBody.newId,
-        operation: operationReceipt(String(duplicateBody.operationId), String(duplicateBody.newId)),
+        operation: receipt,
       });
     });
 

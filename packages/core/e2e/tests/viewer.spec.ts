@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
+import { strFromU8, unzipSync } from 'fflate';
 import {
   deleteSlide,
   duplicateSlide,
@@ -152,11 +153,14 @@ test.describe('slide viewer', () => {
       const htmlDownload = page.waitForEvent('download');
       await page.getByRole('button', { name: 'Download' }).click();
       await page.getByRole('menuitem', { name: 'Export as HTML' }).click();
-      const htmlPath = await (await htmlDownload).path();
+      const htmlArtifact = await htmlDownload;
+      const htmlPath = await htmlArtifact.path();
       expect(htmlPath).not.toBeNull();
-      expect(await fs.readFile(htmlPath as string, 'utf8')).toContain(
-        `data-slide-page-id="${pageId}"`,
-      );
+      const htmlBytes = await fs.readFile(htmlPath as string);
+      const html = htmlArtifact.suggestedFilename().endsWith('.zip')
+        ? strFromU8(unzipSync(htmlBytes)[`${slideId}.html`] ?? new Uint8Array())
+        : htmlBytes.toString('utf8');
+      expect(html).toContain(`data-slide-page-id="${pageId}"`);
 
       await page.evaluate(() => {
         const state = window as typeof window & { __pdfPageIds?: string[] };
