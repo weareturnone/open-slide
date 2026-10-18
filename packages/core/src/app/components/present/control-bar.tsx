@@ -91,7 +91,7 @@ export function PresentControlBar({
         <TooltipContainerCtx.Provider value={tooltipContainer ?? null}>
           <div
             className={cn(
-              'hidden h-11 items-center gap-1 rounded-full border border-white/10 bg-black/55 px-2 text-white/85 shadow-[0_8px_30px_-8px_oklch(0_0_0/0.6)] backdrop-blur-md md:flex',
+              'hidden h-11 items-center gap-1 rounded-[2px] border border-white/10 bg-[#1D1D19]/95 px-2 text-white/85 shadow-[0_8px_30px_-8px_oklch(0_0_0/0.6)] backdrop-blur-md md:flex',
               visible ? 'pointer-events-auto' : 'pointer-events-none',
             )}
           >
@@ -168,7 +168,7 @@ export function PresentControlBar({
               visible ? 'pointer-events-auto' : 'pointer-events-none',
             )}
           >
-            <div className="flex h-10 w-fit items-center gap-0.5 rounded-full border border-white/10 bg-black/60 px-1 text-white/85 shadow-[0_8px_30px_-8px_oklch(0_0_0/0.65)] backdrop-blur-md">
+            <div className="flex h-10 w-fit items-center gap-0.5 rounded-[2px] border border-white/10 bg-[#1D1D19]/95 px-1 text-white/85 shadow-[0_8px_30px_-8px_oklch(0_0_0/0.65)] backdrop-blur-md">
               <MobileBarButton
                 label={t.present.prevSlideAria}
                 onClick={() => handleMobileAction(onPrev)}
@@ -232,7 +232,7 @@ function MobileBarButton({
         onClick();
       }}
       className={cn(
-        'inline-flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-full transition-[background-color,color,opacity,scale] duration-150',
+        'inline-flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-[2px] transition-[background-color,color,opacity,scale] duration-150',
         'text-white/85 hover:bg-white/12 focus-visible:bg-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35',
         'active:scale-[0.94] active:bg-white/12',
         'disabled:pointer-events-none disabled:opacity-30',
@@ -274,11 +274,11 @@ function BarButton({
               onClick();
             }}
             className={cn(
-              'inline-flex size-8 items-center justify-center rounded-full transition-[background-color,color,opacity,scale] duration-150',
+              'inline-flex size-8 items-center justify-center rounded-[2px] transition-[background-color,color,opacity,scale] duration-150',
               'hover:bg-white/12 focus-visible:bg-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/35',
               'active:scale-[0.94]',
               'disabled:pointer-events-none disabled:opacity-30',
-              active && 'bg-[var(--brand,#e5484d)]/85 text-white hover:bg-[var(--brand,#e5484d)]',
+              active && 'bg-brand text-brand-foreground hover:bg-brand/85',
             )}
           >
             {children}

@@ -5,6 +5,7 @@ import { registerCommentRoutes } from './routes/comments.ts';
 import { type ApiPluginOptions, makeContext } from './routes/context.ts';
 import { registerEditRoutes } from './routes/edit.ts';
 import { registerFolderRoutes } from './routes/folders.ts';
+import { registerRemoteRoutes } from './routes/remote.ts';
 import { registerRestartRoutes } from './routes/restart.ts';
 import { registerSlideRoutes } from './routes/slides.ts';
 import { registerSvglRoutes } from './routes/svgl.ts';
@@ -21,6 +22,21 @@ export function apiPlugin(opts: ApiPluginOptions): Plugin {
     name: 'open-slide:api',
     apply: 'serve',
     configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(
+          req.socket.remoteAddress || '',
+        );
+        if (
+          !local &&
+          !['GET', 'HEAD'].includes(req.method || '') &&
+          !req.url?.startsWith('/__remote/')
+        ) {
+          res.writeHead(403, { 'content-type': 'text/plain' });
+          res.end('Bewerken kan alleen op de laptop via localhost.');
+          return;
+        }
+        next();
+      });
       const ctx = makeContext(opts);
       registerWatchers(server, ctx);
       registerEditRoutes(server, ctx);
@@ -32,6 +48,7 @@ export function apiPlugin(opts: ApiPluginOptions): Plugin {
       registerFolderRoutes(server, ctx);
       registerUpdateRoutes(server, ctx);
       registerRestartRoutes(server);
+      registerRemoteRoutes(server);
     },
   };
 }

@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Download,
   FileCode2,
   FileImage,
@@ -46,6 +47,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useFolders } from '@/lib/folders';
+import { studioBrand } from '@/lib/studio-brand';
 import { useAgentSocketConnected } from '@/lib/use-agent-socket';
 import { useClickPageNavigation } from '@/lib/use-click-page-navigation';
 import { useIsMobile } from '@/lib/use-is-mobile';
@@ -58,6 +60,7 @@ import { OverviewGrid } from '../components/overview-grid';
 import { PdfProgressToast } from '../components/pdf-progress-toast';
 import { openPresenterWindow, Player } from '../components/player';
 import { PptxProgressToast } from '../components/pptx-progress-toast';
+import { RemoteHostButton } from '../components/remote-host-button';
 import { SlideCanvas } from '../components/slide-canvas';
 import { isDeckWarmed, markDeckWarmed, SlidePreloadLayer } from '../components/slide-preload-layer';
 import { SlideTransitionLayer } from '../components/slide-transition-layer';
@@ -69,6 +72,7 @@ import { exportSlideAsImagePptx } from '../lib/export-pptx';
 import { remapNotesSessionCacheAfterReorder } from '../lib/inspector/use-notes';
 import { type ContentKind, canvasSizeFor, type SlideModule } from '../lib/sdk';
 import { usePrefersReducedMotion } from '../lib/use-prefers-reduced-motion';
+import { useRemoteHost } from '../lib/use-remote-host';
 import { useSlideModule } from '../lib/use-slide-module';
 
 const { showSlideUi, showSlideBrowser, allowHtmlDownload } = config.build;
@@ -80,10 +84,15 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { slide, error } = useSlideModule(slideId, kind);
+  useEffect(() => {
+    document.title = `${slide?.meta?.title || slideId} · Turn.One Studio`;
+  }, [slide?.meta?.title, slideId]);
+
   const isDocument = kind === 'document';
   const warmKey = `${kind}:${slideId}`;
   const kindQuery = isDocument ? '?kind=document' : '';
   const [playMode, setPlayMode] = useState<'window' | 'fullscreen' | null>(null);
+  const remote = useRemoteHost(slideId, slide?.meta?.title || slideId, !!playMode);
   // Last deck the Player showed. During a presenter-driven deck switch the
   // route's slideId changes while the new module loads and warms; rendering
   // from this cache keeps the Player mounted, which preserves fullscreen
@@ -371,6 +380,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
           onIndexChange={presentReady ? goTo : noop}
           onExit={() => setPlayMode(null)}
           controls
+          remote={import.meta.env.DEV && !isDocument ? remote.bridge : undefined}
           slideId={presented.slideId}
           onSwitchSlide={isDocument ? undefined : switchPresentedSlide}
           fullscreen={playMode === 'fullscreen'}
@@ -622,20 +632,37 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
       <InspectorProvider slideId={slideId} pageIndex={index} kind={kind}>
         <SelectionReporter />
         <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-          {/* Editorial toolbar — three zones, hairline separators, mono-folio center */}
-          <header className="relative flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-sidebar/85 px-2 backdrop-blur-md md:px-3">
-            <div className="flex flex-1 items-center gap-1.5 md:flex-none md:gap-2">
+          <header className="relative flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-background px-2 py-2 md:flex-nowrap md:px-4 md:py-0">
+            <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
               {showSlideBrowser && (
                 <Link
                   to={isDocument ? '/documents' : '/'}
                   aria-label={isDocument ? 'Back to documents' : t.slide.backToHome}
                   title={t.slide.home}
-                  className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
+                  className="flex h-10 shrink-0 items-center gap-2 border-r border-hairline pr-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <ChevronLeft className="size-4" />
+                  <ChevronLeft className="size-3.5" />
+                  <img src={studioBrand.mark} alt="" className="h-[22px] w-6 dark:hidden" />
+                  <img
+                    src={studioBrand.markDark}
+                    alt=""
+                    className="hidden h-[22px] w-6 dark:block"
+                  />
                 </Link>
               )}
-              <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-hairline md:block" />
+              <div className="min-w-0 flex-1">
+                <div className="px-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                  {isDocument ? `${t.studio.documents} / A4` : `${t.home.slides} / Studio`}
+                </div>
+                <InlineTitleEditor
+                  title={title}
+                  onSubmit={(next) => renameSlide(slideId, next, kind)}
+                  noun={isDocument ? 'document' : 'slide'}
+                />
+              </div>
+              {import.meta.env.DEV && <AgentConnectedBadge />}
+            </div>
+            <div className="order-last flex w-full justify-center md:order-none md:w-auto md:px-2">
               {authoringEnabled && (
                 <Tabs
                   value={view}
@@ -651,31 +678,28 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
                     );
                   }}
                 >
-                  <TabsList>
-                    <TabsTrigger value="slides">
-                      {isDocument ? 'Pages' : t.slide.slidesTab}
+                  <TabsList className="h-9 rounded-[2px] border border-border bg-transparent p-[3px] ring-0 group-data-[orientation=horizontal]/tabs:h-9">
+                    <TabsTrigger
+                      value="slides"
+                      className="rounded-none px-3 data-active:bg-foreground data-active:text-background dark:data-active:bg-foreground dark:data-active:text-background"
+                    >
+                      {isDocument ? t.studio.pagesTab : t.slide.slidesTab}
                     </TabsTrigger>
-                    <TabsTrigger value="assets">{t.slide.assetsTab}</TabsTrigger>
+                    <TabsTrigger
+                      value="assets"
+                      className="rounded-none px-3 data-active:bg-foreground data-active:text-background dark:data-active:bg-foreground dark:data-active:text-background"
+                    >
+                      {t.slide.assetsTab}
+                    </TabsTrigger>
                   </TabsList>
                 </Tabs>
               )}
-              {import.meta.env.DEV && <AgentConnectedBadge />}
             </div>
 
-            {/* On md+ the title centers to the viewport via absolute positioning. On mobile the
-                two side groups each flex-1, so the in-flow title lands at the viewport center too —
-                and min-w-0 lets it truncate instead of overlapping the icons on narrow widths. */}
-            <div className="pointer-events-none relative flex min-w-0 justify-center px-2 md:absolute md:inset-x-0">
-              <div className="pointer-events-auto min-w-0 max-w-[34rem]">
-                <InlineTitleEditor
-                  title={title}
-                  onSubmit={(next) => renameSlide(slideId, next, kind)}
-                  noun={isDocument ? 'document' : 'slide'}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-1 items-center justify-end gap-1 md:ml-auto md:flex-none">
+            <div className="flex shrink-0 items-center justify-end gap-1">
+              {import.meta.env.DEV && !isDocument && (
+                <RemoteHostButton remote={remote} onPresent={() => setPlayMode('window')} />
+              )}
               <HostedPublishButton />
               {view === 'slides' && (
                 <button
@@ -770,7 +794,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
                     size="sm"
                     variant="brand"
                     onClick={() => setPlayMode(isMobile ? 'window' : 'fullscreen')}
-                    className="px-2.5 md:rounded-r-none md:px-3"
+                    className="h-9 rounded-[2px] px-2.5 md:rounded-r-none md:px-3"
                   >
                     <Play className="size-3.5 fill-current" />
                     <span className="hidden md:inline">{t.slide.present}</span>
@@ -785,7 +809,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
                       title={t.slide.presentMenuAria}
                       className={cn(
                         buttonVariants({ variant: 'brand', size: 'sm' }),
-                        'hidden rounded-l-none px-1.5 shadow-[inset_1px_0_0_oklch(0_0_0/0.12),inset_0_1px_0_oklch(1_0_0/0.18),0_1px_0_oklch(0_0_0/0.16)] md:inline-flex',
+                        'hidden h-9 rounded-l-none border-l border-brand-foreground/25 px-2 shadow-none md:inline-flex',
                       )}
                     >
                       <ChevronDown className="size-3.5" />
@@ -848,7 +872,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
                     data-inspector-root
                     data-slide-id={slideId}
                     data-content-kind={kind}
-                    className="relative min-h-0 min-w-0 flex-1 bg-canvas p-2 md:p-10"
+                    className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 bg-canvas p-2 md:px-10 md:py-8 xl:px-[7%] xl:py-16"
                   >
                     <SlideViewportNavigation
                       targetRef={slideViewportRef}
@@ -857,19 +881,57 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
                       canPrev={index > 0}
                       canNext={index < pageCount - 1}
                     />
-                    <SlideCanvas
-                      design={slide.design}
-                      canvasWidth={canvas.width}
-                      canvasHeight={canvas.height}
-                    >
-                      <SlideTransitionLayer
-                        pages={pages}
-                        index={index}
-                        total={pageCount}
-                        moduleTransition={slide.transition}
-                        disabled={prefersReducedMotion}
-                      />
-                    </SlideCanvas>
+                    <div className="min-h-0 flex-1">
+                      <SlideCanvas
+                        flat
+                        design={slide.design}
+                        canvasWidth={canvas.width}
+                        canvasHeight={canvas.height}
+                      >
+                        <SlideTransitionLayer
+                          pages={pages}
+                          index={index}
+                          total={pageCount}
+                          moduleTransition={slide.transition}
+                          disabled={prefersReducedMotion}
+                        />
+                      </SlideCanvas>
+                    </div>
+                    <div className="flex shrink-0 items-center justify-between gap-3 font-mono text-[11px] tracking-[0.08em]">
+                      <span className="text-muted-foreground">
+                        <span className="text-foreground">
+                          {String(index + 1).padStart(2, '0')} /{' '}
+                          {String(pageCount).padStart(2, '0')}
+                        </span>
+                        <span className="ml-4 hidden sm:inline">
+                          {isDocument
+                            ? t.studio.a4Ready
+                            : format(t.studio.slideNumber, {
+                                number: String(index + 1).padStart(2, '0'),
+                              })}
+                        </span>
+                      </span>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          aria-label={t.themes.prevPageAria}
+                          disabled={index === 0}
+                          onClick={() => goTo(index - 1)}
+                        >
+                          <ChevronLeft className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          aria-label={t.themes.nextPageAria}
+                          disabled={index === pageCount - 1}
+                          onClick={() => goTo(index + 1)}
+                        >
+                          <ChevronRight className="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
                     <InspectOverlay />
                     <SaveBar />
                     {import.meta.env.DEV && !isDocument && <CommentWidget />}
@@ -956,7 +1018,7 @@ export function Slide({ kind = 'slide' }: { kind?: ContentKind }) {
 }
 
 const RAIL_WIDTH_STORAGE_KEY = 'open-slide:thumbnail-rail-width';
-const DEFAULT_RAIL_WIDTH = 264;
+const DEFAULT_RAIL_WIDTH = 232;
 const MIN_RAIL_WIDTH = 200;
 const MAX_RAIL_WIDTH = 480;
 
@@ -1095,16 +1157,16 @@ function AgentConnectedBadge() {
           render={
             <button
               type="button"
-              className="ml-1 flex shrink-0 cursor-help items-center gap-1.5 rounded-[3px] border border-hairline bg-card px-1.5 py-0.5 text-[10.5px] text-foreground/85 outline-none transition-colors duration-150 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/30"
+              className="ml-1 hidden shrink-0 cursor-help items-center gap-1.5 rounded-[2px] border border-[#3977C3]/35 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[#3977C3] outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/30 xl:flex"
             >
               <span aria-hidden className="relative flex size-1.5 items-center justify-center">
                 {connected ? (
                   <>
-                    <span className="absolute inline-flex size-full rounded-full bg-emerald-500 opacity-60 motion-safe:animate-ping" />
-                    <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                    <span className="absolute inline-flex size-full bg-[#3977C3] opacity-60 motion-safe:animate-ping" />
+                    <span className="relative inline-flex size-1.5 bg-[#3977C3]" />
                   </>
                 ) : (
-                  <span className="relative inline-flex size-1.5 rounded-full bg-rose-500" />
+                  <span className="relative inline-flex size-1.5 bg-muted-foreground" />
                 )}
               </span>
               {connected ? t.slide.agentConnected : t.slide.agentDisconnected}
@@ -1236,7 +1298,7 @@ function InlineTitleEditor({
         <div className="inline-grid max-w-full items-center">
           <span
             aria-hidden
-            className="invisible col-start-1 row-start-1 overflow-hidden whitespace-pre border border-transparent px-2 py-0.5 font-heading text-[13.5px] font-semibold tracking-[-0.01em]"
+            className="invisible col-start-1 row-start-1 overflow-hidden whitespace-pre border border-transparent px-2 py-0.5 font-heading text-[17px] font-medium tracking-[-0.02em]"
           >
             {value || ' '}
           </span>
@@ -1260,7 +1322,7 @@ function InlineTitleEditor({
               }
             }}
             maxLength={80}
-            className="col-start-1 row-start-1 w-full min-w-0 rounded-[5px] border border-foreground/30 bg-card px-2 py-0.5 text-center font-heading text-[13.5px] font-semibold tracking-[-0.01em] outline-none"
+            className="col-start-1 row-start-1 w-full min-w-0 rounded-[5px] border border-foreground/30 bg-card px-2 py-0.5 text-center font-heading text-[17px] font-medium tracking-[-0.02em] outline-none"
           />
         </div>
       </div>
@@ -1269,8 +1331,8 @@ function InlineTitleEditor({
 
   if (!authoringEnabled) {
     return (
-      <div className="flex min-w-0 items-baseline justify-center">
-        <h1 className="truncate font-heading text-[13.5px] font-semibold tracking-[-0.01em]">
+      <div className="flex min-w-0 items-baseline justify-start">
+        <h1 className="truncate font-heading text-[17px] font-medium tracking-[-0.02em]">
           {title}
         </h1>
       </div>
@@ -1278,17 +1340,17 @@ function InlineTitleEditor({
   }
 
   return (
-    <div className="flex min-w-0 items-center justify-center">
+    <div className="flex min-w-0 items-center justify-start">
       <button
         type="button"
         onClick={() => setEditing(true)}
-        aria-label={noun === 'document' ? 'Rename document' : t.slide.renameSlide}
+        aria-label={noun === 'document' ? t.studio.renameDocument : t.slide.renameSlide}
         className={cn(
           'min-w-0 max-w-full cursor-text rounded-[5px] border border-transparent px-2 py-0.5 transition-colors duration-100',
           'hover:border-foreground/30 hover:bg-card focus-visible:border-foreground/30 focus-visible:bg-card focus-visible:outline-none',
         )}
       >
-        <h1 className="truncate font-heading text-[13.5px] font-semibold tracking-[-0.01em]">
+        <h1 className="truncate font-heading text-[17px] font-medium tracking-[-0.02em]">
           {title}
         </h1>
       </button>

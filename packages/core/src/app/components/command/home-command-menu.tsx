@@ -1,12 +1,14 @@
-import { Image as ImageIcon, Palette, Presentation } from 'lucide-react';
-import { useMemo } from 'react';
+import { FileText, Folder, Image as ImageIcon, Palette } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { authoringEnabled } from '@/lib/authoring';
 import { useLocale } from '@/lib/use-locale';
 import { useSlideTitles } from '@/lib/use-slide-titles';
-import type { Folder } from '../../lib/sdk';
-import { slideIds } from '../../lib/slides';
+import type { Folder as FolderData } from '../../lib/sdk';
+import { documentIds, loadDocument, slideIds, slideThemes } from '../../lib/slides';
+import { themes } from '../../lib/themes';
 import { FolderIconChip } from '../sidebar/folder-item';
-import { ALL_SLIDES_ID, ASSETS_ID, DRAFT_ID, THEMES_ID } from '../sidebar/sidebar';
+import { ALL_SLIDES_ID, ASSETS_ID, DOCUMENTS_ID, DRAFT_ID, THEMES_ID } from '../sidebar/sidebar';
 import { type CommandGroupSpec, CommandMenu, type CommandSpec } from './command-menu';
 
 export function HomeCommandMenu({
@@ -18,19 +20,44 @@ export function HomeCommandMenu({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  folders: Folder[];
+  folders: FolderData[];
   titleMap: Record<string, string>;
   onSelectView: (id: string) => void;
 }) {
   const t = useLocale();
   const navigate = useNavigate();
   const loadedTitles = useSlideTitles(open);
+  const [documentTitles, setDocumentTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void Promise.all(
+      documentIds.map(async (id) => {
+        try {
+          const document = await loadDocument(id);
+          return [id, document.meta?.title ?? id];
+        } catch {
+          return [id, id];
+        }
+      }),
+    ).then((entries) => {
+      if (!cancelled) setDocumentTitles(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const groups = useMemo<CommandGroupSpec[]>(() => {
-    const slides: CommandSpec[] = slideIds.map((id) => ({
+    const slides: CommandSpec[] = slideIds.map((id, index) => ({
       id: `slide-${id}`,
       label: titleMap[id] ?? loadedTitles[id] ?? id,
-      icon: <Presentation />,
+      icon: (
+        <span className="w-5 shrink-0 font-mono text-[10px] text-muted-foreground">
+          {String(index + 1).padStart(2, '0')}
+        </span>
+      ),
+      detail: themes.find((theme) => theme.id === slideThemes[id])?.name ?? slideThemes[id],
       keywords: [id],
       run: () => navigate(`/s/${id}`),
     }));
@@ -39,14 +66,14 @@ export function HomeCommandMenu({
       {
         id: `view-${ALL_SLIDES_ID}`,
         label: t.home.slides,
-        icon: <FolderIconChip icon={{ type: 'emoji', value: '🎞️' }} />,
+        icon: <span className="w-5 font-mono text-[10px]">01</span>,
         keywords: ['all', 'slides'],
         run: () => onSelectView(ALL_SLIDES_ID),
       },
       {
         id: `view-${DRAFT_ID}`,
         label: t.home.draft,
-        icon: <FolderIconChip icon={{ type: 'emoji', value: '📝' }} />,
+        icon: <Folder />,
         keywords: ['draft', 'unsorted'],
         run: () => onSelectView(DRAFT_ID),
       },
@@ -59,7 +86,22 @@ export function HomeCommandMenu({
       })),
     ];
 
+    const documents: CommandSpec[] = documentIds.map((id) => ({
+      id: `document-${id}`,
+      label: documentTitles[id] ?? id,
+      icon: <FileText />,
+      detail: 'A4',
+      keywords: [id, 'document'],
+      run: () => navigate(`/d/${id}`),
+    }));
     const navigation: CommandSpec[] = [
+      {
+        id: `view-${DOCUMENTS_ID}`,
+        label: t.studio.documents,
+        icon: <FileText />,
+        keywords: ['documents', 'a4'],
+        run: () => onSelectView(DOCUMENTS_ID),
+      },
       {
         id: `view-${THEMES_ID}`,
         label: t.home.themes,
@@ -68,7 +110,7 @@ export function HomeCommandMenu({
         run: () => onSelectView(THEMES_ID),
       },
     ];
-    if (import.meta.env.DEV) {
+    if (authoringEnabled) {
       navigation.push({
         id: `view-${ASSETS_ID}`,
         label: t.home.assets,
@@ -80,10 +122,11 @@ export function HomeCommandMenu({
 
     return [
       { id: 'slides', heading: t.commandMenu.groupSlides, items: slides },
+      { id: 'documents', heading: t.studio.documents, items: documents },
       { id: 'folders', heading: t.commandMenu.groupFolders, items: folderItems },
       { id: 'navigation', heading: t.commandMenu.groupNavigation, items: navigation },
     ];
-  }, [t, folders, titleMap, loadedTitles, navigate, onSelectView]);
+  }, [t, folders, titleMap, loadedTitles, documentTitles, navigate, onSelectView]);
 
   return (
     <CommandMenu

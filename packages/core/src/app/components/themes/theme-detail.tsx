@@ -15,6 +15,9 @@ export function ThemeDetail({ themeId, onBack }: { themeId: string; onBack: () =
   const theme = useMemo(() => themes.find((th) => th.id === themeId), [themeId]);
   const [demo, setDemo] = useState<ThemeDemoModule | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
+  useEffect(() => {
+    document.title = `${theme?.name ?? t.studio.theme} · Turn.One Studio`;
+  }, [theme?.name, t.studio.theme]);
 
   useEffect(() => {
     setPageIndex(0);
@@ -85,7 +88,7 @@ export function ThemeDetail({ themeId, onBack }: { themeId: string; onBack: () =
       </div>
 
       <header className="flex flex-wrap items-baseline gap-3">
-        <h2 className="font-heading text-[26px] font-semibold leading-[1.05] tracking-[-0.025em] md:text-[32px]">
+        <h2 className="font-heading text-[40px] font-medium leading-[1.05] tracking-[-0.04em] md:text-[56px]">
           {theme.name}
         </h2>
         {theme.description ? (
@@ -98,7 +101,7 @@ export function ThemeDetail({ themeId, onBack }: { themeId: string; onBack: () =
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:gap-8">
         <div className="flex min-w-0 flex-col gap-6">
           <div className="flex flex-col gap-3">
-            <div className="relative aspect-video overflow-hidden rounded-[8px] border border-hairline bg-card shadow-edge ring-1 ring-foreground/[0.04]">
+            <div className="relative aspect-video overflow-hidden rounded-[2px] border border-border bg-card">
               {!theme.hasDemo ? (
                 <NoDemoLargeState />
               ) : !demo ? (
@@ -229,7 +232,7 @@ function ThemeSlideCard({ id }: { id: string }) {
       to={`/s/${id}`}
       className="group block rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <div className="relative aspect-video overflow-hidden rounded-[6px] border border-hairline bg-card shadow-edge ring-1 ring-foreground/[0.04] group-hover:shadow-floating group-hover:ring-foreground/20 group-active:scale-[0.99] motion-safe:transition-[box-shadow,--tw-ring-color,scale] motion-safe:duration-200">
+      <div className="relative aspect-video overflow-hidden rounded-[2px] border border-border bg-card group-hover:border-foreground/40 group-hover:ring-foreground/20 group-active:scale-[0.99] motion-safe:transition-[box-shadow,--tw-ring-color,scale] motion-safe:duration-200">
         {FirstPage ? (
           <div className="h-full w-full ease-swift motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:scale-[1.03]">
             <SlideCanvas flat freezeMotion design={slide?.design}>

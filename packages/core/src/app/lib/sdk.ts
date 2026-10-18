@@ -16,6 +16,7 @@ export type CanvasSize = {
 export type SlideMeta = {
   title?: string;
   theme?: string;
+  sections?: { title: string; start: number }[];
   /** ISO 8601 timestamp. Set once at scaffold time; used to sort the slide list. */
   createdAt?: string;
   /** Slides remain the default so existing decks need no migration. */

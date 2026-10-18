@@ -33,6 +33,9 @@ export function editorCanvas(page: Page): Locator {
 // can fire before this page's HMR socket connects — so retry with a reload.
 export async function openSlide(page: Page, slideId: string, query = ''): Promise<void> {
   await page.goto(`/s/${slideId}${query}`);
+  // Fixture add/delete events can deliver a debounced Vite reload after the
+  // first canvas paint. Let that navigation settle before sending user input.
+  await page.waitForLoadState('networkidle');
   for (let attempt = 0; ; attempt++) {
     try {
       await expect(editorCanvas(page)).toBeVisible({ timeout: 15_000 });

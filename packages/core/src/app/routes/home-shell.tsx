@@ -13,11 +13,11 @@ import {
 import { useAssets } from '@/lib/assets';
 import { authoringEnabled } from '@/lib/authoring';
 import { useFolders } from '@/lib/folders';
+import { studioBrand } from '@/lib/studio-brand';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import { CommandMenuTrigger } from '../components/command/command-menu';
 import { HomeCommandMenu } from '../components/command/home-command-menu';
-import { FolderIconChip } from '../components/sidebar/folder-item';
 import {
   ALL_SLIDES_ID,
   ASSETS_ID,
@@ -186,9 +186,19 @@ export function HomeShell() {
         />
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto bg-canvas">
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto bg-background">
         <div className="flex items-center justify-between border-b border-hairline bg-sidebar px-4 py-3 md:hidden">
-          <h1 className="font-heading text-lg font-bold tracking-tight">{t.home.appTitle}</h1>
+          <div className="flex items-center gap-3">
+            <img src={studioBrand.wordmark} alt="Turn.One" className="h-5 w-[102px] dark:hidden" />
+            <img
+              src={studioBrand.wordmarkDark}
+              alt="Turn.One"
+              className="hidden h-5 w-[102px] dark:block"
+            />
+            <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              Studio
+            </span>
+          </div>
           <div className="-mr-1.5 flex items-center gap-0.5">
             <CommandMenuTrigger onClick={openCommandMenu} />
             <LanguageToggle />
@@ -215,7 +225,7 @@ export function HomeShell() {
                       'bg-muted text-foreground',
                   )}
                 >
-                  <FolderIconChip icon={{ type: 'emoji', value: '🎞️' }} />
+                  <span className="font-mono text-[11px] text-muted-foreground">01</span>
                   <span className="flex-1 truncate">{t.home.slides}</span>
                   <span className="folio">{slideIds.length.toString().padStart(2, '0')}</span>
                 </DropdownMenuItem>
@@ -223,15 +233,15 @@ export function HomeShell() {
                   onClick={() => selectFolder(DOCUMENTS_ID)}
                   className={cn(selectedId === DOCUMENTS_ID && 'bg-muted text-foreground')}
                 >
-                  <FolderIconChip icon={{ type: 'emoji', value: '📄' }} />
-                  <span className="flex-1 truncate">Documents</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">02</span>
+                  <span className="flex-1 truncate">{t.studio.documents}</span>
                   <span className="folio">{documentIds.length.toString().padStart(2, '0')}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => selectFolder(THEMES_ID)}
                   className={cn(selectedId === THEMES_ID && 'bg-muted text-foreground')}
                 >
-                  <FolderIconChip icon={{ type: 'emoji', value: '🎨' }} />
+                  <span className="font-mono text-[11px] text-muted-foreground">03</span>
                   <span className="flex-1 truncate">{t.home.themes}</span>
                   <span className="folio">{themeRegistry.length.toString().padStart(2, '0')}</span>
                 </DropdownMenuItem>
@@ -240,7 +250,7 @@ export function HomeShell() {
                     onClick={() => selectFolder(ASSETS_ID)}
                     className={cn(selectedId === ASSETS_ID && 'bg-muted text-foreground')}
                   >
-                    <FolderIconChip icon={{ type: 'emoji', value: '🗂️' }} />
+                    <span className="font-mono text-[11px] text-muted-foreground">04</span>
                     <span className="flex-1 truncate">{t.home.assets}</span>
                     <span className="folio">{globalAssets.length.toString().padStart(2, '0')}</span>
                   </DropdownMenuItem>
@@ -254,7 +264,7 @@ export function HomeShell() {
           className={cn(
             isAssetsRoute
               ? 'flex min-h-0 flex-1 flex-col'
-              : 'mx-auto w-full max-w-[1180px] px-5 py-8 md:px-10 md:py-12',
+              : 'w-full px-5 pb-10 pt-6 md:px-8 lg:px-14 lg:pt-4',
           )}
         >
           <Outlet context={ctx} />

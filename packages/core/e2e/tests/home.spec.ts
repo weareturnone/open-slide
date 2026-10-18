@@ -70,13 +70,13 @@ test.describe('home slide browser', () => {
     await expect(page.getByText('投影片').first()).toBeVisible();
   });
 
-  test('sidebar toolbar buttons label themselves on hover', async ({ page }) => {
+  test('sidebar search is labeled and icon buttons label themselves on hover', async ({ page }) => {
     await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Open command menu' })).toContainText('Search');
     const tooltip = page.locator('[data-slot="tooltip-content"]').last();
     // A single move lands without the pointer ever resting, which is what the
     // tooltip waits for.
     for (const [name, label] of [
-      ['Open command menu', 'Search'],
       ['Change language', 'Language'],
       ['Toggle theme', 'Theme'],
     ]) {

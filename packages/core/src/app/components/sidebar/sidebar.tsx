@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { LanguageToggle } from '@/components/language-toggle';
@@ -6,9 +6,10 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { authoringEnabled } from '@/lib/authoring';
 import type { Folder, FolderIcon } from '@/lib/sdk';
+import { studioBrand } from '@/lib/studio-brand';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
-import { CommandMenuTrigger } from '../command/command-menu';
+import { COMMAND_MENU_SHORTCUT } from '../command/command-menu';
 import { FolderIconChip, FolderItem } from './folder-item';
 import { IconPicker, PRESET_COLORS } from './icon-picker';
 import { SidebarFooter } from './sidebar-footer';
@@ -134,13 +135,33 @@ export function Sidebar({
 
   return (
     <aside className="relative flex h-full w-[16.5rem] shrink-0 flex-col border-r border-hairline bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center justify-between px-4 pt-5 pb-4">
-        <h1 className="font-heading text-lg font-bold tracking-tight">{t.home.appTitle}</h1>
-        <div className="-mr-1.5 flex items-center">
-          <CommandMenuTrigger onClick={onOpenCommandMenu} />
-          <LanguageToggle />
-          <ThemeToggle />
-        </div>
+      <div className="flex flex-col gap-2.5 border-b border-hairline px-6 py-7">
+        <img
+          src={studioBrand.wordmark}
+          alt="Turn.One"
+          className="h-[22px] w-[112px] object-contain object-left dark:hidden"
+        />
+        <img
+          src={studioBrand.wordmarkDark}
+          alt="Turn.One"
+          className="hidden h-[22px] w-[112px] object-contain object-left dark:block"
+        />
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+          Studio
+        </span>
+      </div>
+      <div className="px-4 pt-4 pb-4">
+        <button
+          type="button"
+          onClick={onOpenCommandMenu}
+          aria-label={t.commandMenu.triggerAria}
+          aria-haspopup="dialog"
+          className="flex h-9 w-full items-center gap-2 rounded-[2px] border border-border bg-card px-2.5 text-[13px] text-muted-foreground outline-none hover:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Search className="size-3.5" />
+          <span>{t.commandMenu.triggerTooltip}</span>
+          <kbd className="ml-auto font-mono text-[11px]">{COMMAND_MENU_SHORTCUT}</kbd>
+        </button>
       </div>
 
       <div className="px-2">
@@ -176,9 +197,8 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="mt-5 flex items-center gap-2 px-4 pb-1.5">
+      <div className="mt-7 flex items-center gap-2 px-5 pb-2">
         <span className="eyebrow">{t.home.folders}</span>
-        <span className="h-px flex-1 bg-hairline" aria-hidden />
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2">
@@ -297,7 +317,7 @@ export function Sidebar({
             <button
               type="button"
               onClick={startCreating}
-              className="mt-1 flex w-full items-center gap-2 rounded-[5px] px-2 py-1.5 text-[12px] text-muted-foreground outline-none transition-[background-color,color,scale] duration-100 hover:bg-muted/60 hover:text-foreground active:scale-[0.98] focus-visible:ring-1 focus-visible:ring-brand"
+              className="mt-1 flex h-9 w-full items-center gap-3 rounded-[2px] px-3 text-[14px] text-muted-foreground outline-none transition-[background-color,color,scale] duration-100 hover:bg-muted/60 hover:text-foreground active:scale-[0.98] focus-visible:ring-1 focus-visible:ring-brand"
             >
               <Plus className="size-3.5" />
               <span>{t.home.newFolder}</span>
@@ -305,8 +325,12 @@ export function Sidebar({
           ))}
       </div>
 
-      <div className="border-t border-hairline">
+      <div className="flex items-center justify-between border-t border-hairline pr-4">
         <SidebarFooter />
+        <div className="flex items-center gap-1">
+          <LanguageToggle />
+          <ThemeToggle />
+        </div>
       </div>
     </aside>
   );

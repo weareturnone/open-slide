@@ -3,6 +3,7 @@ import { useClickPageNavigation } from '@/lib/use-click-page-navigation';
 import { useWheelPageNavigation } from '@/lib/use-wheel-page-navigation';
 import { cn } from '@/lib/utils';
 import type { DesignSystem } from '../lib/design';
+import type { RemoteBridge } from '../lib/remote-protocol';
 import type { ContentKind, Page } from '../lib/sdk';
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from '../lib/sdk';
 import type { EntryDirection, StepAggregate, StepController } from '../lib/step-context';
@@ -51,6 +52,7 @@ type Props = {
   canvasWidth?: number;
   canvasHeight?: number;
   kind?: ContentKind;
+  remote?: RemoteBridge;
 };
 
 export function Player({
@@ -68,6 +70,7 @@ export function Player({
   canvasWidth = CANVAS_WIDTH,
   canvasHeight = CANVAS_HEIGHT,
   kind = 'slide',
+  remote,
 }: Props) {
   const isMobile = useIsMobile();
   const prefersReducedMotion = usePrefersReducedMotion();
@@ -84,6 +87,8 @@ export function Player({
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [blackout, setBlackout] = useState<'black' | 'white' | null>(null);
+  const [remoteAck, setRemoteAck] = useState<string>();
+  const [remoteJump, setRemoteJump] = useState(0);
   const [laser, setLaser] = useState(false);
   const [keyboardDriven, setKeyboardDriven] = useState(false);
   const [mobileChromeVisible, setMobileChromeVisible] = useState(false);
@@ -278,6 +283,30 @@ export function Player({
   }, [controls, channel, presenterState]);
 
   useEffect(() => {
+    if (controls) remote?.publish(presenterState, remoteAck);
+  }, [controls, remote, presenterState, remoteAck]);
+
+  useEffect(
+    () =>
+      remote?.subscribe(({ id, command }) => {
+        if (!controls) return;
+        if (command.type === 'blackout') setBlackout(command.enabled ? 'black' : null);
+        else {
+          setBlackout(null);
+          if (command.type === 'next') goNext();
+          else if (command.type === 'prev') goPrev();
+          else {
+            setEntryDirection('jump');
+            setRemoteJump((value) => value + 1);
+            onIndexChange(Math.max(0, Math.min(pages.length - 1, command.index)));
+          }
+        }
+        setRemoteAck(id);
+      }),
+    [remote, controls, goNext, goPrev, onIndexChange, pages.length],
+  );
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target;
       if (tgt instanceof HTMLElement && tgt.matches('input, textarea')) return;
@@ -418,7 +447,7 @@ export function Player({
         {/* Keyed per deck so a presenter-driven deck switch cuts instead of
             animating a transition between two unrelated decks. */}
         <SlideTransitionLayer
-          key={slideId}
+          key={`${slideId}:${remoteJump}`}
           pages={pages}
           index={index}
           total={pages.length}

@@ -57,6 +57,7 @@ declare module 'virtual:open-slide/themes' {
     id: string;
     name: string;
     description: string;
+    mode?: string;
     body: string;
     hasDemo: boolean;
   };

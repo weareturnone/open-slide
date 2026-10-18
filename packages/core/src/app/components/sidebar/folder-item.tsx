@@ -48,10 +48,7 @@ export function FolderIconChip({ icon, className }: { icon: FolderIcon; classNam
   }
   return (
     <span
-      className={cn(
-        'inline-block size-3 rounded-[3px] ring-1 ring-foreground/15 shadow-[inset_0_1px_0_oklch(1_0_0/0.18)]',
-        className,
-      )}
+      className={cn('inline-block size-2 border border-foreground/15', className)}
       style={{ background: icon.value }}
     />
   );
@@ -130,17 +127,15 @@ export function FolderItem({
   };
 
   const icon: FolderIcon =
-    row.kind === 'all'
-      ? { type: 'emoji', value: '🎞️' }
-      : row.kind === 'draft'
-        ? { type: 'emoji', value: '📝' }
-        : row.kind === 'themes'
-          ? { type: 'emoji', value: '🎨' }
-          : row.kind === 'documents'
-            ? { type: 'emoji', value: '📄' }
-            : row.kind === 'assets'
-              ? { type: 'emoji', value: '🗂️' }
-              : row.folder.icon;
+    row.kind === 'folder' ? row.folder.icon : { type: 'color', value: 'transparent' };
+  const index = {
+    all: '01',
+    documents: '02',
+    themes: '03',
+    assets: '04',
+    draft: null,
+    folder: null,
+  }[row.kind];
   const label =
     row.kind === 'all'
       ? t.home.slides
@@ -149,7 +144,7 @@ export function FolderItem({
         : row.kind === 'themes'
           ? t.home.themes
           : row.kind === 'documents'
-            ? 'Documents'
+            ? t.studio.documents
             : row.kind === 'assets'
               ? t.home.assets
               : row.folder.name;
@@ -165,9 +160,10 @@ export function FolderItem({
     // biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop target wraps interactive children
     <div
       className={cn(
-        'group relative flex items-center gap-2.5 rounded-[5px] px-2 py-[5px] text-[12.5px] transition-[background-color,color,scale] duration-150',
+        'group relative flex items-center gap-3 px-3 text-[14px] transition-colors duration-150',
+        index ? 'h-10' : 'h-9',
         selected
-          ? 'bg-muted text-foreground before:absolute before:inset-y-1.5 before:-left-0.5 before:w-[2px] before:rounded-full before:bg-brand'
+          ? 'bg-muted text-foreground before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-brand'
           : 'text-foreground/70 hover:bg-muted/60 hover:text-foreground',
         slideDragActive && acceptsSlideDrop && !dragOver && 'ring-1 ring-foreground/10',
         dragOver &&
@@ -203,7 +199,18 @@ export function FolderItem({
           aria-label={label}
           className="flex size-5 shrink-0 items-center justify-center"
         >
-          <FolderIconChip icon={icon} />
+          {index ? (
+            <span
+              className={cn(
+                'font-mono text-[11px]',
+                selected ? 'text-brand-text' : 'text-muted-foreground',
+              )}
+            >
+              {index}
+            </span>
+          ) : (
+            <span className="size-2 border border-muted-foreground" />
+          )}
         </button>
       )}
 
@@ -227,6 +234,7 @@ export function FolderItem({
         <button
           type="button"
           onClick={onSelect}
+          aria-current={selected ? 'page' : undefined}
           className="min-w-0 flex-1 truncate rounded-[3px] text-left outline-none focus-visible:ring-1 focus-visible:ring-brand"
         >
           {label}

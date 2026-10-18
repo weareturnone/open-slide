@@ -17,6 +17,7 @@ function resolved(id: string): string {
 }
 
 type Frontmatter = {
+  mode?: string;
   name: string;
   description: string;
 };
@@ -53,6 +54,7 @@ function parseFrontmatter(raw: string, themeId: string): { fm: Frontmatter; body
     fm: {
       name: data.name || themeId,
       description: data.description || '',
+      mode: data.mode || undefined,
     },
     body: body.trim(),
   };
@@ -86,6 +88,7 @@ function generateThemesModule(themes: ParsedTheme[], isDev: boolean): string {
     id: t.id,
     name: t.frontmatter.name,
     description: t.frontmatter.description,
+    mode: t.frontmatter.mode,
     body: t.body,
     hasDemo: t.demoAbs !== null,
   }));

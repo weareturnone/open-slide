@@ -12,11 +12,12 @@ export function ThemesGallery({ onOpen }: { onOpen: (id: string) => void }) {
   }
 
   return (
-    <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(240px,100%),1fr))] gap-x-6 gap-y-9 md:grid-cols-[repeat(auto-fill,minmax(340px,1fr))]">
-      {themes.map((theme) => (
+    <ul className="divide-y divide-hairline">
+      {themes.map((theme, index) => (
         <li key={theme.id}>
           <ThemeCard
             theme={theme}
+            index={index}
             onOpen={() => onOpen(theme.id)}
             ariaLabel={format(t.themes.openThemeAria, { name: theme.name })}
           />
@@ -28,33 +29,67 @@ export function ThemesGallery({ onOpen }: { onOpen: (id: string) => void }) {
 
 function ThemeCard({
   theme,
+  index,
   onOpen,
   ariaLabel,
 }: {
   theme: Theme;
+  index: number;
   onOpen: () => void;
   ariaLabel: string;
 }) {
+  const t = useLocale();
+  const mode =
+    theme.mode === 'light' ? t.common.light : theme.mode === 'dark' ? t.common.dark : theme.mode;
+  const paletteSection = theme.body.match(/## Palette\s*\n([\s\S]*?)(?=\n## |$)/i)?.[1] ?? '';
+  const palette = Array.from(
+    paletteSection.matchAll(/^\|\s*([^|]+?)\s*\|\s*`?(#[\da-f]{6})`?\s*\|/gim),
+  ).map((match) => ({ role: match[1].trim(), color: match[2] }));
+  const primaryRoles = new Set(['bg', 'text', 'accent', 'cyan', 'navy', 'system', 'transition']);
+  const swatches = palette.filter((entry) => primaryRoles.has(entry.role)).slice(0, 5);
   return (
     <button
       type="button"
       onClick={onOpen}
       aria-label={ariaLabel}
-      className="group block w-full rounded-[6px] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="group grid w-full items-start gap-5 py-7 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring md:grid-cols-[minmax(180px,32%)_1fr] lg:gap-8 xl:grid-cols-[320px_1fr_auto]"
     >
-      <div className="relative aspect-video overflow-hidden rounded-[6px] border border-hairline bg-card shadow-edge ring-1 ring-foreground/[0.04] group-hover:shadow-floating group-hover:ring-foreground/20 group-active:scale-[0.99] motion-safe:transition-[box-shadow,--tw-ring-color,scale] motion-safe:duration-200">
+      <div className="relative aspect-video w-full overflow-hidden border border-border bg-card transition-colors group-hover:border-foreground/50">
         <ThemePreview theme={theme} />
       </div>
-      <div className="mt-3">
-        <h3 className="min-w-0 truncate font-heading text-[14px] font-medium tracking-tight">
+      <div className="min-w-0 space-y-2.5 pt-1">
+        <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+          {String(index + 1).padStart(2, '0')}
+          {mode && ` · ${mode}`}
+        </p>
+        <h3 className="font-heading text-[30px] font-medium leading-[1.1] tracking-[-0.035em]">
           {theme.name}
         </h3>
+        {theme.description && (
+          <p className="max-w-[440px] text-[14px] leading-5 text-muted-foreground">
+            {theme.description}
+          </p>
+        )}
       </div>
-      {theme.description ? (
-        <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-muted-foreground">
-          {theme.description}
-        </p>
-      ) : null}
+      {swatches.length > 0 && (
+        <div className="space-y-2 pt-1 md:col-start-2 xl:col-start-auto">
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            {t.studio.palette}
+          </span>
+          <div className="flex">
+            {swatches.map(({ role, color }) => (
+              <span
+                key={role}
+                role="img"
+                title={`${role}: ${color}`}
+                aria-label={`${role}: ${color}`}
+                className="size-7 border border-foreground/10"
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </button>
   );
 }
@@ -77,7 +112,7 @@ function ThemePreview({ theme }: { theme: Theme }) {
   if (!FirstPage) return <NoDemoState />;
 
   return (
-    <div className="h-full w-full ease-swift motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:scale-[1.03]">
+    <div className="h-full w-full">
       <SlideCanvas flat freezeMotion design={demo.design}>
         <SlidePageProvider index={0} total={demo.default.length}>
           <FirstPage />

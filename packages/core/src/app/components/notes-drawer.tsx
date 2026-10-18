@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronUp, NotebookPen } from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { CommentWidget } from '@/components/inspector/comment-widget';
 import { PANEL_TRANSITION_MS, usePanelMount } from '@/components/panel/panel-shell';
 import { useNotes } from '@/lib/inspector/use-notes';
 import { format, useLocale } from '@/lib/use-locale';
@@ -46,7 +47,7 @@ export function NotesDrawer({ slideId, index, total, initial }: Props) {
   return (
     <aside
       data-notes-drawer
-      className="hidden shrink-0 border-t border-hairline bg-sidebar/85 backdrop-blur md:block"
+      className="relative hidden shrink-0 border-t border-hairline bg-background md:block"
     >
       <button
         type="button"
@@ -56,12 +57,16 @@ export function NotesDrawer({ slideId, index, total, initial }: Props) {
             return !o;
           });
         }}
-        className="flex h-9 w-full items-center gap-2 px-3 text-[12px] text-foreground/80 transition-colors duration-150 hover:bg-muted/40 active:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
+        className="flex h-12 w-full items-center gap-3 py-0 pl-5 pr-48 text-[12px] text-foreground/80 transition-colors duration-150 hover:bg-muted/40 active:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
         aria-expanded={open}
       >
-        <NotebookPen className="size-3.5 text-muted-foreground" />
-        <span className="font-medium">{t.notesDrawer.toggle}</span>
-        <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-brand-text">
+          {t.notesDrawer.toggle}
+        </span>
+        {!open && value.trim() && (
+          <span className="min-w-0 truncate text-[13px] text-foreground">{value}</span>
+        )}
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
           {format(t.notesDrawer.pageLabel, { n: index + 1, total })}
         </span>
         <span
@@ -79,6 +84,7 @@ export function NotesDrawer({ slideId, index, total, initial }: Props) {
           <ChevronUp className="size-3.5 text-muted-foreground" />
         )}
       </button>
+      <CommentWidget placement="notes" />
       {mounted && (
         <div
           className="overflow-hidden border-t border-hairline transition-[height] ease-swift motion-reduce:transition-none"
@@ -110,7 +116,7 @@ export function NotesDrawer({ slideId, index, total, initial }: Props) {
               placeholder={t.notesDrawer.placeholder}
               rows={6}
               spellCheck
-              className="block h-[150px] w-full resize-none rounded-[6px] border border-border bg-card px-3 py-2 text-[13px] leading-relaxed text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              className="block h-[150px] w-full resize-none rounded-[2px] border border-border bg-card px-3 py-2 text-[13px] leading-relaxed text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             />
           </div>
         </div>

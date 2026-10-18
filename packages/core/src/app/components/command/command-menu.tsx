@@ -25,6 +25,7 @@ export type CommandSpec = {
   /** Extra match terms — ASCII aliases keep commands findable under any locale. */
   keywords?: string[];
   shortcut?: string;
+  detail?: string;
   disabled?: boolean;
   active?: boolean;
   run: () => void | Promise<void>;
@@ -105,6 +106,11 @@ export function CommandMenu({
                 >
                   {item.icon}
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.detail && (
+                    <span className="hidden max-w-[150px] truncate font-mono text-[9px] uppercase tracking-[0.04em] text-muted-foreground sm:block">
+                      {item.detail}
+                    </span>
+                  )}
                   {item.active && <Check className="ml-auto opacity-100 text-brand" aria-hidden />}
                   {item.shortcut && <CommandShortcut>{item.shortcut}</CommandShortcut>}
                 </CommandItem>
@@ -143,7 +149,7 @@ export function CommandMenuTrigger({ onClick }: { onClick: () => void }) {
 function CommandFooter() {
   const t = useLocale();
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-hairline bg-muted/30 px-3 py-2 text-[10.5px] text-muted-foreground">
+    <div className="flex items-center justify-between gap-3 border-t border-hairline bg-muted/30 px-6 py-3 font-mono text-[10.5px] text-muted-foreground">
       <Hint keys="esc" label={t.commandMenu.hintClose} />
       <span className="inline-flex items-center gap-3">
         <Hint keys="↑↓" label={t.commandMenu.hintNavigate} />

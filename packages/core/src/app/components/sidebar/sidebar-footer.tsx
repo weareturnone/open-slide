@@ -68,7 +68,7 @@ export function SidebarFooter() {
   );
 
   return (
-    <div className="px-4 py-3 text-[11px] text-muted-foreground/70 tabular-nums">
+    <div className="px-5 py-4 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground tabular-nums">
       {update?.latest ? (
         <TooltipProvider delay={200}>
           <Tooltip

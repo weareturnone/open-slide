@@ -7,7 +7,6 @@ import {
   FolderInput,
   FolderPlus,
   MoreHorizontal,
-  Palette,
   Pencil,
   Plus,
   Search,
@@ -34,7 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { format, useLocale } from '@/lib/use-locale';
+import { format, plural, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import { FolderIconChip, SLIDE_DND_MIME } from '../components/sidebar/folder-item';
 import { ALL_SLIDES_ID, DRAFT_ID } from '../components/sidebar/sidebar';
@@ -56,6 +55,7 @@ import {
   slideCreatedAt,
   slideIds,
 } from '../lib/slides';
+import { themes } from '../lib/themes';
 import type { HomeOutletContext } from './home-shell';
 
 type SortKey = 'created-desc' | 'created-asc' | 'title-asc' | 'title-desc';
@@ -119,12 +119,11 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
         : (slidesByFolder[selectedId] ?? []);
 
   const title = isDocuments
-    ? 'Documents'
+    ? t.studio.documents
     : (selectedFolder?.name ?? (isAll ? t.home.slides : t.home.draft));
-  const headerIcon = selectedFolder?.icon ?? {
-    type: 'emoji' as const,
-    value: isDocuments ? '📄' : isAll ? '🎞️' : '📝',
-  };
+  useEffect(() => {
+    document.title = `${title} · Turn.One Studio`;
+  }, [title]);
 
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useSortPref();
@@ -168,10 +167,9 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
 
   return (
     <>
-      <header className="mb-8 md:mb-12">
-        <div className="flex flex-wrap items-center gap-3">
-          <FolderIconChip icon={headerIcon} className="size-7 text-2xl" />
-          <h1 className="font-heading text-[32px] font-semibold leading-[1.05] tracking-[-0.025em] md:text-[44px]">
+      <header className="-mx-5 mb-8 border-b border-hairline px-5 pb-6 md:-mx-8 md:px-8 lg:-mx-14 lg:px-14 lg:pb-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-6">
+          <h1 className="font-heading text-[52px] font-medium leading-[0.95] tracking-[-0.05em] lg:text-[76px]">
             {title}
           </h1>
           <DropdownMenu>
@@ -191,7 +189,7 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
                 onClick={() => selectFolder(ALL_SLIDES_ID)}
                 className={cn(isAll && 'bg-muted text-foreground')}
               >
-                <FolderIconChip icon={{ type: 'emoji', value: '🎞️' }} />
+                <span className="w-5 font-mono text-[11px] text-muted-foreground">01</span>
                 <span className="flex-1 truncate">{t.home.slides}</span>
                 <span className="folio">{slideIds.length.toString().padStart(2, '0')}</span>
               </DropdownMenuItem>
@@ -199,15 +197,15 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
                 onClick={() => selectFolder('documents')}
                 className={cn(isDocuments && 'bg-muted text-foreground')}
               >
-                <FolderIconChip icon={{ type: 'emoji', value: '📄' }} />
-                <span className="flex-1 truncate">Documents</span>
+                <span className="w-5 font-mono text-[11px] text-muted-foreground">02</span>
+                <span className="flex-1 truncate">{t.studio.documents}</span>
                 <span className="folio">{documentIds.length.toString().padStart(2, '0')}</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => selectFolder(DRAFT_ID)}
                 className={cn(isDraft && 'bg-muted text-foreground')}
               >
-                <FolderIconChip icon={{ type: 'emoji', value: '📝' }} />
+                <span className="mx-1.5 size-2 border border-muted-foreground" />
                 <span className="flex-1 truncate">{t.home.draft}</span>
                 <span className="folio">{draftSlides.length.toString().padStart(2, '0')}</span>
               </DropdownMenuItem>
@@ -227,7 +225,7 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
             </DropdownMenuContent>
           </DropdownMenu>
           {!loading && (
-            <span className="folio ml-1 self-end pb-2">
+            <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground lg:self-end lg:pb-2 lg:text-[13px]">
               {(isSearching ? filteredSlides.length : visibleSlides.length)
                 .toString()
                 .padStart(2, '0')}
@@ -235,19 +233,28 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
                 <span className="opacity-40">
                   /{visibleSlides.length.toString().padStart(2, '0')}
                 </span>
+              )}{' '}
+              {plural(
+                isSearching ? filteredSlides.length : visibleSlides.length,
+                isDocuments ? t.studio.documentUnits : t.studio.deckUnits,
               )}
             </span>
           )}
-          <div className="ml-auto flex w-full items-center gap-2 md:w-auto">
+          <div className="ml-auto flex w-full flex-wrap items-center gap-2 xl:w-auto">
+            <SearchInput value={query} onChange={setQuery} kind={kind} />
+            <SortControl value={sortKey} onChange={setSortKey} />
             <HostedPublishButton />
             {config.authoring?.decks && (
-              <Button size="sm" variant="brand" onClick={() => setNewDeckOpen(true)}>
+              <Button
+                size="sm"
+                variant="brand"
+                className="h-10 px-4"
+                onClick={() => setNewDeckOpen(true)}
+              >
                 <Plus className="size-3.5" />
-                New {isDocuments ? 'document' : 'deck'}
+                {isDocuments ? t.studio.newDocument : t.studio.newDeck}
               </Button>
             )}
-            <SortControl value={sortKey} onChange={setSortKey} />
-            <SearchInput value={query} onChange={setQuery} kind={kind} />
           </div>
         </div>
       </header>
@@ -259,11 +266,17 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
       ) : filteredSlides.length === 0 ? (
         <NoResultsState query={query} onClear={() => setQuery('')} />
       ) : (
-        <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-6 gap-y-9 md:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
-          {sortedSlides.map((id) => (
+        <ul
+          className={cn(
+            'grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2',
+            isDocuments ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
+          )}
+        >
+          {sortedSlides.map((id, index) => (
             <li key={id}>
               <SlideCard
                 id={id}
+                index={index}
                 kind={kind}
                 folders={isDocuments ? [] : manifest.folders}
                 currentFolderId={manifest.assignments[id] ?? null}
@@ -274,7 +287,7 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
                     const newSlideId = await duplicateSlide(id, undefined, kind);
                     toast.success(
                       isDocuments
-                        ? `Document duplicated as ${newSlideId}`
+                        ? format(t.studio.documentDuplicated, { id: newSlideId })
                         : format(t.home.toastSlideDuplicated, {
                             slide: slideName,
                             newSlide: newSlideId,
@@ -283,7 +296,7 @@ export function Home({ kind = 'slide' }: { kind?: ContentKind }) {
                   } catch {
                     toast.error(
                       isDocuments
-                        ? 'Document could not be duplicated'
+                        ? t.studio.documentDuplicateFailed
                         : t.home.toastSlideDuplicateFailed,
                     );
                   }
@@ -312,7 +325,7 @@ function SearchInput({
 }) {
   const t = useLocale();
   return (
-    <div className="relative w-full md:w-[240px]">
+    <div className="relative min-w-[140px] flex-1 sm:w-[240px] sm:flex-none">
       <Search
         className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
         aria-hidden
@@ -321,8 +334,9 @@ function SearchInput({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={kind === 'document' ? 'Search documents' : t.home.searchPlaceholder}
-        className="h-8 w-full rounded-[6px] border border-border bg-background pl-8 pr-7 text-[12.5px] outline-none placeholder:text-muted-foreground/70 focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
+        aria-label={kind === 'document' ? t.studio.searchDocuments : t.home.searchPlaceholder}
+        placeholder={kind === 'document' ? t.studio.searchDocuments : t.home.searchPlaceholder}
+        className="h-10 w-full rounded-[2px] border border-border bg-card pl-8 pr-7 text-[13px] outline-none placeholder:text-muted-foreground/70 focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
       />
       {value && (
         <button
@@ -359,9 +373,11 @@ function SortControl({ value, onChange }: { value: SortKey; onChange: (next: Sor
           <button
             type="button"
             aria-label={`${t.home.sortLabel}: ${labels[value]}`}
-            className="flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[6px] border border-border bg-background pl-2 pr-1.5 text-[12.5px] font-medium text-foreground outline-none transition-[background-color,translate] duration-100 hover:bg-muted active:translate-y-px focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
+            className="flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-[2px] border border-border bg-card px-3 text-[13px] font-medium text-foreground outline-none transition-[background-color,translate] duration-100 hover:bg-muted active:translate-y-px focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
           >
-            <FieldIcon k={value} className="size-3.5 text-muted-foreground" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+              {t.home.sortLabel}
+            </span>
             <span>{labels[value]}</span>
             <ChevronDown className="size-3 text-muted-foreground" aria-hidden />
           </button>
@@ -450,14 +466,14 @@ function EmptyState({
         {kind === 'document' ? (
           <>
             <p className="mt-4 font-heading text-[15px] font-semibold tracking-tight">
-              No documents yet
+              {t.studio.noDocuments}
             </p>
             <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-              Create an A4 document from the catalog or add one with Codex under{' '}
+              {t.studio.emptyDocumentsPrefix}
               <code className="rounded-[4px] bg-muted px-1.5 py-0.5 font-mono text-[11.5px] text-foreground">
                 documents/
               </code>
-              .
+              {t.studio.emptyDocumentsSuffix}
             </p>
           </>
         ) : isDraft ? (
@@ -535,6 +551,7 @@ type DialogKind = null | 'rename' | 'move' | 'delete';
 
 function SlideCard({
   id,
+  index,
   kind,
   folders,
   currentFolderId,
@@ -545,6 +562,7 @@ function SlideCard({
   onTitleResolved,
 }: {
   id: string;
+  index: number;
   kind: ContentKind;
   folders: Folder[];
   currentFolderId: string | null;
@@ -601,15 +619,14 @@ function SlideCard({
       >
         <Link
           to={href}
-          className="block rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="block rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
-          {/* Slide thumb — tight border, grey baseboard, no shadcn rounded-xl */}
           <div
-            className="relative overflow-hidden rounded-[6px] border border-hairline bg-card shadow-edge ring-1 ring-foreground/[0.04] group-hover:shadow-floating group-hover:ring-foreground/20 motion-safe:transition-[box-shadow,--tw-ring-color,scale] motion-safe:duration-200 group-active:scale-[0.99]"
+            className="relative overflow-hidden rounded-[2px] border border-border bg-card transition-colors group-hover:border-foreground/50"
             style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}
           >
             {FirstPage ? (
-              <div className="h-full w-full ease-swift motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:scale-[1.03]">
+              <div className="h-full w-full">
                 <SlideCanvas
                   flat
                   freezeMotion
@@ -629,21 +646,48 @@ function SlideCard({
             )}
           </div>
         </Link>
-        <div className="mt-3 flex items-center gap-2">
-          <Link to={href} className="min-w-0 flex-1 focus-visible:outline-none">
-            <h3 className="min-w-0 truncate font-heading text-[14px] font-medium tracking-tight">
-              {displayTitle}
-            </h3>
-          </Link>
-          {slide?.meta?.theme && (
+        <div className="mt-3.5 flex items-start gap-3">
+          <span className="w-5 shrink-0 pt-0.5 font-mono text-[11px] text-muted-foreground">
+            {String(index + 1).padStart(2, '0')}
+          </span>
+          <div className="min-w-0 flex-1">
             <Link
-              to={`/themes/${encodeURIComponent(slide.meta.theme)}`}
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              to={href}
+              className="block min-w-0 rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <Palette className="size-3" aria-hidden />
-              <span className="max-w-[120px] truncate">{slide.meta.theme}</span>
+              <h3 className="truncate text-[14px] font-medium leading-[18px]">{displayTitle}</h3>
             </Link>
-          )}
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-[10px] uppercase leading-4 text-muted-foreground">
+              <span className="truncate">
+                {kind === 'document'
+                  ? 'A4'
+                  : (folders.find((folder) => folder.id === currentFolderId)?.name ??
+                    tCard.home.draft)}
+              </span>
+              {slide?.meta?.theme && (
+                <>
+                  <span aria-hidden>·</span>
+                  <Link
+                    to={`/themes/${encodeURIComponent(slide.meta.theme)}`}
+                    className="truncate hover:text-foreground"
+                  >
+                    {themes.find((theme) => theme.id === slide.meta?.theme)?.name ??
+                      slide.meta.theme}
+                  </Link>
+                </>
+              )}
+              {kind === 'document' && slide && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>
+                    {format(plural(slide.default.length, tCard.studio.pages), {
+                      count: slide.default.length,
+                    })}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         {authoringEnabled && (
@@ -657,8 +701,10 @@ function SlideCard({
                       e.stopPropagation();
                       e.preventDefault();
                     }}
-                    className="flex size-7 items-center justify-center rounded-[5px] bg-card/90 text-foreground shadow-edge ring-1 ring-border opacity-0 outline-none backdrop-blur hover:bg-card group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-ring/40 aria-expanded:opacity-100 motion-safe:transition-opacity motion-safe:duration-150"
-                    aria-label={kind === 'document' ? 'Document actions' : tCard.home.slideActions}
+                    className="flex size-7 items-center justify-center rounded-[2px] border border-border bg-card/90 text-foreground opacity-100 md:opacity-0 outline-none backdrop-blur hover:bg-card group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-ring/40 aria-expanded:opacity-100 motion-safe:transition-opacity motion-safe:duration-150"
+                    aria-label={
+                      kind === 'document' ? tCard.studio.documentActions : tCard.home.slideActions
+                    }
                   >
                     <MoreHorizontal className="size-3.5" />
                   </button>
@@ -774,14 +820,14 @@ function RenameDialog({
       <DialogContent>
         <DialogHeader>
           <span className="eyebrow">
-            {kind === 'document' ? 'Document' : t.home.renameDialogEyebrow}
+            {kind === 'document' ? t.studio.document : t.home.renameDialogEyebrow}
           </span>
           <DialogTitle>
-            {kind === 'document' ? 'Rename document' : t.home.renameDialogTitle}
+            {kind === 'document' ? t.studio.renameDocument : t.home.renameDialogTitle}
           </DialogTitle>
           <DialogDescription>
             {kind === 'document'
-              ? 'Change the title shown in the Documents library.'
+              ? t.studio.renameDocumentDescription
               : t.home.renameDialogDescription}
           </DialogDescription>
         </DialogHeader>
@@ -797,7 +843,7 @@ function RenameDialog({
             }
           }}
           maxLength={80}
-          placeholder={kind === 'document' ? 'Document name' : t.home.slideNamePlaceholder}
+          placeholder={kind === 'document' ? t.studio.documentName : t.home.slideNamePlaceholder}
           className="h-9 w-full rounded-[6px] border border-border bg-background px-3 text-[13px] outline-none focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring/30"
         />
         <DialogFooter>
@@ -961,15 +1007,16 @@ function DeleteDialog({
       <DialogContent>
         <DialogHeader>
           <span className="eyebrow text-destructive/80">
-            {kind === 'document' ? 'Document' : t.home.deleteDialogEyebrow}
+            {kind === 'document' ? t.studio.document : t.home.deleteDialogEyebrow}
           </span>
           <DialogTitle>
-            {kind === 'document' ? 'Delete document' : t.home.deleteDialogTitle}
+            {kind === 'document' ? t.studio.deleteDocument : t.home.deleteDialogTitle}
           </DialogTitle>
           {kind === 'document' ? (
             <DialogDescription>
-              Delete <span className="font-medium text-foreground">{slideName}</span> and its local
-              assets. Git history keeps the published source recoverable.
+              {t.studio.deleteDocumentPrefix}
+              <span className="font-medium text-foreground">{slideName}</span>
+              {t.studio.deleteDocumentSuffix}
             </DialogDescription>
           ) : (
             <DialogDescription>

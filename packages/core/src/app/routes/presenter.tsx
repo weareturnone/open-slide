@@ -20,6 +20,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { studioBrand } from '@/lib/studio-brand';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import {
@@ -37,6 +38,9 @@ import { useSlideModule } from '../lib/use-slide-module';
 export function Presenter() {
   const { slideId = '' } = useParams();
   const { slide, error } = useSlideModule(slideId);
+  useEffect(() => {
+    document.title = `${slide?.meta?.title || slideId} · Presenter · Turn.One Studio`;
+  }, [slide?.meta?.title, slideId]);
 
   // Presenter view is a passive mirror of the projection window. It only
   // tracks the index it last heard about; navigation buttons send commands
@@ -136,7 +140,7 @@ export function Presenter() {
         <div className="max-w-md text-center">
           <span className="eyebrow text-destructive/80">{t.common.loadFailed}</span>
           <h2 className="mt-2 font-heading text-xl font-semibold">{t.common.failedToLoadSlide}</h2>
-          <pre className="mt-4 overflow-auto rounded-[6px] border border-border bg-card p-4 text-left text-[11.5px] whitespace-pre-wrap shadow-edge">
+          <pre className="mt-4 overflow-auto rounded-[2px] border border-border bg-card p-4 text-left text-[11.5px] whitespace-pre-wrap break-words shadow-edge">
             {error}
           </pre>
         </div>
@@ -204,7 +208,7 @@ export function Presenter() {
   }
 
   return (
-    <div className="dark flex h-dvh w-screen flex-col overflow-hidden bg-background text-foreground">
+    <div className="dark flex h-dvh w-screen flex-col overflow-hidden bg-[#1D1D19] text-foreground">
       <PresenterTopBar
         index={index}
         total={total}
@@ -215,11 +219,18 @@ export function Presenter() {
         onSwitchDeck={switchDeck}
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 px-6 pb-4 lg:grid-cols-[2fr_1fr]">
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-1 gap-6 overflow-y-auto p-4 md:p-7 lg:auto-rows-auto lg:grid-cols-[minmax(0,2.1fr)_minmax(280px,1fr)] lg:overflow-hidden">
         {/* Now-showing */}
         <section className="flex min-h-0 flex-col gap-3">
-          <SectionLabel>{t.presenter.nowShowing}</SectionLabel>
-          <div className="relative min-h-0 flex-1 overflow-hidden rounded-[8px] bg-black ring-1 ring-border">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-brand">
+              {t.presenter.nowShowing}
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {String(index + 1).padStart(2, '0')}
+            </span>
+          </div>
+          <div className="relative aspect-video w-full min-h-0 shrink-0 overflow-hidden bg-black ring-2 ring-brand lg:max-h-[calc(100dvh-260px)]">
             <SlideCanvas flat design={slide.design}>
               <SlidePageProvider index={index} total={total}>
                 <PreviewStepHost revealed={stepIndex}>
@@ -240,14 +251,57 @@ export function Presenter() {
               </div>
             )}
           </div>
+          <div
+            className="mt-4 shrink-0"
+            role="progressbar"
+            aria-label={t.studio.presentationProgress}
+            aria-valuenow={index + 1}
+            aria-valuemin={1}
+            aria-valuemax={total}
+          >
+            <div className="flex h-6 items-center justify-between gap-px" aria-hidden="true">
+              {pages.map((_, pageIndex) => (
+                <span
+                  // biome-ignore lint/suspicious/noArrayIndexKey: Progress ticks represent fixed slide positions.
+                  key={pageIndex}
+                  className={cn(
+                    'w-[2px] shrink',
+                    pageIndex === index
+                      ? 'h-6 bg-brand'
+                      : pageIndex < index
+                        ? 'h-3.5 bg-foreground'
+                        : 'h-3.5 bg-muted-foreground/45',
+                  )}
+                />
+              ))}
+            </div>
+            {slide.meta?.sections && (
+              <div className="mt-2 flex gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+                {slide.meta.sections.map((section, sectionIndex, sections) => (
+                  <span
+                    key={section.start}
+                    className="min-w-0 truncate"
+                    style={{ flex: (sections[sectionIndex + 1]?.start ?? total) - section.start }}
+                    title={section.title}
+                  >
+                    {section.title}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Next + notes */}
-        <aside className="flex min-h-0 flex-col gap-4">
+        <aside className="flex min-h-[320px] flex-col gap-5 lg:min-h-0">
           <div className="flex flex-col gap-2">
-            <SectionLabel>{hasNext ? t.presenter.upNext : t.presenter.lastSlide}</SectionLabel>
+            <SectionLabel>
+              {hasNext
+                ? `${t.presenter.upNext} · ${String(nextPageIndex + 1).padStart(2, '0')}`
+                : t.presenter.lastSlide}
+            </SectionLabel>
             <div
-              className="relative w-full overflow-hidden rounded-[8px] bg-black ring-1 ring-border"
+              className="relative w-full shrink-0 overflow-hidden bg-black ring-1 ring-border"
               style={{ aspectRatio: `${CANVAS_WIDTH}/${CANVAS_HEIGHT}` }}
             >
               {NextPage ? (
@@ -267,8 +321,6 @@ export function Presenter() {
           </div>
 
           <SpeakerNotes note={note} />
-
-          <PresenterJumpControl total={total} current={index} onJump={goTo} />
         </aside>
       </div>
 
@@ -276,6 +328,9 @@ export function Presenter() {
         index={index}
         total={total}
         blackout={blackout}
+        canPrev={index > 0 || stepIndex > 0}
+        canNext={hasNext}
+        onJump={goTo}
         onPrev={goPrev}
         onNext={goNext}
         onBlackout={toggleBlack}
@@ -304,27 +359,45 @@ function PresenterTopBar({
 }) {
   const t = useLocale();
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-hairline px-6">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="eyebrow text-white/45">{t.presenter.eyebrow}</span>
+    <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-hairline px-4 py-3 md:px-7">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3 border-r border-border pr-4">
+          <img src={studioBrand.wordmarkDark} alt="Turn.One" className="h-[17px] w-[88px]" />
+          <span className="hidden items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground sm:flex">
+            <span className="size-1.5 bg-brand" />
+            {t.presenter.eyebrow}
+          </span>
+        </div>
         {slideIds.length > 1 ? (
           <DeckSwitcher slideId={slideId} slideTitle={slideTitle} onSwitchDeck={onSwitchDeck} />
         ) : (
-          <span className="truncate font-heading text-[14px] font-semibold tracking-tight">
+          <span className="truncate font-heading text-[17px] font-medium tracking-tight">
             {slideTitle}
           </span>
         )}
         {!connected && (
-          <span className="rounded-[3px] border border-amber-300/30 bg-amber-300/10 px-1.5 py-0.5 font-mono text-[10px] tracking-[0.06em] uppercase text-amber-200/85">
+          <span className="hidden shrink-0 rounded-[2px] border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground xl:block">
             {t.presenter.notLinked}
           </span>
         )}
       </div>
-      <div className="flex items-center gap-6">
-        <Clock />
-        <ElapsedClock startedAt={startedAt} />
+      <div className="flex shrink-0 items-center gap-5">
+        <div className="hidden flex-col items-end gap-0.5 sm:flex">
+          <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+            {t.presenter.currentTime}
+          </span>
+          <Clock />
+        </div>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+            {t.presenter.elapsed}
+          </span>
+          <ElapsedClock startedAt={startedAt} />
+        </div>
         <div className="font-mono text-[18px] tabular-nums">
-          <span className="text-foreground">{(index + 1).toString().padStart(2, '0')}</span>
+          <span className="font-heading text-[34px] leading-none text-foreground">
+            {(index + 1).toString().padStart(2, '0')}
+          </span>
           <span className="text-foreground/30"> / </span>
           <span className="text-muted-foreground">{total.toString().padStart(2, '0')}</span>
         </div>
@@ -418,9 +491,9 @@ function DeckSwitcher({
       <DialogTrigger
         aria-label={t.presenter.switchDeck}
         title={t.presenter.switchDeck}
-        className="group -mx-1.5 flex min-w-0 items-center gap-1 rounded-[5px] px-1.5 py-0.5 outline-none hover:bg-card focus-visible:ring-2 focus-visible:ring-ring/30"
+        className="group -mx-1.5 flex min-w-0 items-center gap-1 rounded-[2px] px-1.5 py-0.5 outline-none hover:bg-card focus-visible:ring-2 focus-visible:ring-ring/30"
       >
-        <span className="truncate font-heading text-[14px] font-semibold tracking-tight">
+        <span className="truncate font-heading text-[17px] font-medium tracking-tight">
           {slideTitle}
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -457,12 +530,12 @@ function DeckSwitcher({
                   onClick={() => select(id)}
                   onMouseMove={() => setActiveIndex(i)}
                   className={cn(
-                    'flex w-full items-center gap-3 rounded-[6px] p-2 text-left outline-none transition-[background-color,scale] duration-100 active:scale-[0.99] focus-visible:ring-1 focus-visible:ring-ring/40',
+                    'flex w-full items-center gap-3 rounded-[2px] p-2 text-left outline-none transition-[background-color,scale] duration-100 active:scale-[0.99] focus-visible:ring-1 focus-visible:ring-ring/40',
                     i === active && 'bg-muted',
                   )}
                 >
                   <div
-                    className="w-24 shrink-0 overflow-hidden rounded-[4px] bg-black ring-1 ring-border"
+                    className="w-24 shrink-0 overflow-hidden rounded-none bg-black ring-1 ring-border"
                     style={{ aspectRatio: `${CANVAS_WIDTH}/${CANVAS_HEIGHT}` }}
                   >
                     {FirstPage && (
@@ -499,6 +572,9 @@ function PresenterBottomBar({
   index,
   total,
   blackout,
+  canPrev,
+  canNext,
+  onJump,
   onPrev,
   onNext,
   onBlackout,
@@ -507,6 +583,9 @@ function PresenterBottomBar({
   index: number;
   total: number;
   blackout: 'black' | 'white' | null;
+  canPrev: boolean;
+  canNext: boolean;
+  onJump: (index: number) => void;
   onPrev: () => void;
   onNext: () => void;
   onBlackout: () => void;
@@ -514,14 +593,17 @@ function PresenterBottomBar({
 }) {
   const t = useLocale();
   return (
-    <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-6 py-3">
+    <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-hairline px-4 py-4 md:px-7">
       <div className="flex items-center gap-2">
-        <Button variant="outline" onClick={onPrev} disabled={index === 0}>
+        <Button variant="outline" className="h-11 px-4" onClick={onPrev} disabled={!canPrev}>
           <ChevronLeft className="size-4" /> {t.presenter.prev}
         </Button>
-        <Button variant="outline" onClick={onNext} disabled={index >= total - 1}>
+        <Button variant="brand" className="h-11 px-5" onClick={onNext} disabled={!canNext}>
           {t.presenter.next} <ChevronRight className="size-4" />
         </Button>
+        <div className="ml-1 sm:ml-3">
+          <PresenterJumpControl total={total} current={index} onJump={onJump} />
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <Button
@@ -551,7 +633,7 @@ function PresenterBottomBar({
 }
 
 const NOTES_FONT_SIZES = [11, 12, 13.5, 15, 17, 20, 24, 28];
-const NOTES_FONT_SIZE_DEFAULT_INDEX = 2;
+const NOTES_FONT_SIZE_DEFAULT_INDEX = 6;
 const NOTES_FONT_SIZE_STORAGE_KEY = 'open-slide:presenter-notes-font-size';
 
 function SpeakerNotes({ note }: { note: string | undefined }) {
@@ -569,7 +651,7 @@ function SpeakerNotes({ note }: { note: string | undefined }) {
   }, [sizeIndex]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-[120px] flex-1 flex-col gap-3 border-t border-border pt-4 lg:min-h-0">
       <div className="flex items-center justify-between">
         <SectionLabel>{t.presenter.speakerNotes}</SectionLabel>
         <div className="flex items-center gap-1">
@@ -596,7 +678,7 @@ function SpeakerNotes({ note }: { note: string | undefined }) {
         </div>
       </div>
       <div
-        className="min-h-0 flex-1 overflow-y-auto rounded-[6px] border border-border bg-card p-3 leading-relaxed whitespace-pre-wrap text-card-foreground"
+        className="min-h-0 flex-1 overflow-y-auto leading-[1.35] whitespace-pre-wrap break-words text-foreground"
         style={{ fontSize: NOTES_FONT_SIZES[sizeIndex] }}
       >
         {note?.trim() ? (
@@ -646,7 +728,8 @@ function PresenterJumpControl({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={(current + 1).toString()}
-        className="h-8 w-20 rounded-[5px] border border-border bg-card px-2 font-mono text-[12px] tabular-nums outline-none focus-visible:border-foreground/30"
+        aria-label={t.presenter.jump}
+        className="h-8 w-16 rounded-[2px] border border-border bg-card px-2 font-mono text-[12px] tabular-nums outline-none focus-visible:border-foreground/30"
       />
       <span className="font-mono text-[11px] tabular-nums text-muted-foreground">/ {total}</span>
     </form>
@@ -654,7 +737,11 @@ function PresenterJumpControl({
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <span className="eyebrow">{children}</span>;
+  return (
+    <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+      {children}
+    </span>
+  );
 }
 
 function PreviewStepHost({ revealed, children }: { revealed: number; children: ReactNode }) {
@@ -706,7 +793,7 @@ function ElapsedClock({ startedAt }: { startedAt: number }) {
   return (
     <time
       title={t.presenter.elapsed}
-      className="font-mono text-[18px] tabular-nums text-foreground"
+      className="font-mono text-[15px] tabular-nums text-foreground"
     >
       {text}
     </time>

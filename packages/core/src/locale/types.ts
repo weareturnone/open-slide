@@ -30,6 +30,57 @@ export type Locale = {
     selected: string;
   };
 
+  studio: {
+    document: string;
+    noDocuments: string;
+    emptyDocumentsPrefix: string;
+    emptyDocumentsSuffix: string;
+    renameDocument: string;
+    renameDocumentDescription: string;
+    documentName: string;
+    deleteDocument: string;
+    deleteDocumentPrefix: string;
+    deleteDocumentSuffix: string;
+
+    pagesTab: string;
+    a4Ready: string;
+    slideNumber: string;
+    documents: string;
+    searchDocuments: string;
+    documentActions: string;
+    newDeck: string;
+    newDocument: string;
+    startDeck: string;
+    startDocument: string;
+    layoutDescription: string;
+    title: string;
+    projectProposal: string;
+    deckId: string;
+    documentId: string;
+    startingLayout: string;
+    loadingLayouts: string;
+    noLayouts: string;
+    publishesImmediately: string;
+    createDeck: string;
+    createDocument: string;
+    creatingDeck: string;
+    creatingDocument: string;
+    deckCreated: string;
+    documentCreated: string;
+    deckDeploying: string;
+    documentDeploying: string;
+    documentDuplicated: string;
+    documentDuplicateFailed: string;
+    palette: string;
+    theme: string;
+    comments: string;
+    presentationProgress: string;
+    deckUnits: Plural;
+    documentUnits: Plural;
+    systemUnits: Plural;
+    pages: Plural;
+  };
+
   notFound: {
     eyebrow: string;
     title: string;

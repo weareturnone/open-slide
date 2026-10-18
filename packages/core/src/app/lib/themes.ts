@@ -6,6 +6,7 @@ export type Theme = {
   id: string;
   name: string;
   description: string;
+  mode?: string;
   body: string;
   hasDemo: boolean;
 };

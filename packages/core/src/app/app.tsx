@@ -7,6 +7,7 @@ import { AssetsPage } from './routes/assets';
 import { Home } from './routes/home';
 import { HomeShell } from './routes/home-shell';
 import { Presenter } from './routes/presenter';
+import { Remote } from './routes/remote';
 import { Slide } from './routes/slide';
 import { ThemeDetailPage, ThemesGalleryPage } from './routes/themes';
 
@@ -31,6 +32,7 @@ export function App() {
           <Route path="/s/:slideId" element={<Slide />} />
           <Route path="/d/:slideId" element={<Slide kind="document" />} />
           <Route path="/s/:slideId/presenter" element={<Presenter />} />
+          <Route path="/remote" element={<Remote />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </TooltipProvider>

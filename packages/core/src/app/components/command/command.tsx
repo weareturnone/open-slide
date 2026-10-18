@@ -33,7 +33,7 @@ function CommandDialog({
         showCloseButton={false}
         // ⌘K fires dozens of times a day — opacity-only and fast, no scale
         // theater on a keyboard-triggered surface.
-        className="top-[14vh] translate-y-0 gap-0 overflow-hidden p-0 duration-100 data-starting-style:scale-100 data-ending-style:scale-100 sm:max-w-[560px]"
+        className="top-[14vh] translate-y-0 gap-0 overflow-hidden p-0 duration-100 data-starting-style:scale-100 data-ending-style:scale-100 sm:max-w-[640px]"
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">{description}</DialogDescription>
@@ -48,12 +48,12 @@ function CommandInput({
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
-    <div className="flex items-center gap-2 border-b border-hairline px-3">
+    <div className="flex items-center gap-3 border-b border-hairline px-6">
       <Search className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
-          'h-11 w-full bg-transparent text-[13px] outline-none placeholder:text-muted-foreground/70 disabled:opacity-50',
+          'h-20 w-full bg-transparent font-heading text-[24px] tracking-[-0.03em] sm:text-[30px] outline-none placeholder:text-muted-foreground/70 disabled:opacity-50',
           className,
         )}
         {...props}
@@ -67,7 +67,7 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Comman
     <CommandPrimitive.List
       data-slot="command-list"
       className={cn(
-        'max-h-[min(56vh,380px)] scroll-py-1 overflow-y-auto overscroll-contain p-1',
+        'max-h-[min(56vh,440px)] scroll-py-1 overflow-y-auto overscroll-contain px-2 py-3',
         className,
       )}
       {...props}
@@ -95,7 +95,7 @@ function CommandGroup({
       className={cn(
         'overflow-hidden pt-1.5 pb-1 [&:not(:first-child)]:mt-1 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-hairline',
         '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-1.5',
-        '[&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted-foreground/70',
+        '[&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted-foreground/70',
         className,
       )}
       {...props}
@@ -108,8 +108,8 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        'relative flex cursor-default select-none items-center gap-2 rounded-[5px] px-2 py-1.5 text-[12.5px] outline-none',
-        'data-[selected=true]:bg-muted data-[selected=true]:text-foreground active:bg-muted/80',
+        'relative flex min-h-11 cursor-default select-none items-center gap-3 rounded-none border-l-2 border-transparent px-4 py-2 text-[14px] outline-none',
+        'data-[selected=true]:border-brand data-[selected=true]:bg-muted data-[selected=true]:text-foreground active:bg-muted/80',
         'data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-45',
         "[&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground [&_svg:not([class*='opacity'])]:opacity-80",
         className,

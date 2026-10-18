@@ -79,8 +79,8 @@ type Props = {
   overviewAriaLabel?: string;
 };
 
-const DEFAULT_VERTICAL_THUMB_WIDTH = 184;
-const VERTICAL_RAIL_CHROME = 80;
+const DEFAULT_VERTICAL_THUMB_WIDTH = 172;
+const VERTICAL_RAIL_CHROME = 60;
 const MIN_VERTICAL_THUMB_WIDTH = 120;
 const HORIZONTAL_THUMB_HEIGHT = 64;
 const HORIZONTAL_THUMB_GAP = 8;
@@ -244,7 +244,7 @@ export function ThumbnailRail({
               type="button"
               onClick={() => onInsert(i + 1)}
               aria-label={`Insert ${insertNoun} after page ${i + 1}`}
-              className="absolute -bottom-2 left-1/2 z-10 grid size-5 -translate-x-1/2 place-items-center rounded-full border border-hairline bg-card text-muted-foreground opacity-55 shadow-sm transition hover:border-brand hover:text-brand hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
+              className="absolute -bottom-2 left-1/2 z-10 grid size-5 -translate-x-1/2 place-items-center rounded-[2px] border border-hairline bg-card text-muted-foreground opacity-55 shadow-sm transition hover:border-brand hover:text-brand hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand"
             >
               <Plus className="size-3" />
             </button>
@@ -276,7 +276,7 @@ export function ThumbnailRail({
     const scale = HORIZONTAL_THUMB_HEIGHT / canvasHeight;
     const horizontalWidth = canvasWidth * scale;
     return (
-      <div className="bg-sidebar">
+      <div className="bg-background">
         <div className="overflow-x-auto overflow-y-hidden">
           <HorizontalVirtualThumbList
             pages={pages}
@@ -297,7 +297,7 @@ export function ThumbnailRail({
 
   const list = (
     <aside className="flex flex-col gap-2 px-3 pb-3">
-      <div className="-mx-3 sticky top-0 z-10 bg-sidebar px-4 pt-3 pb-1">
+      <div className="-mx-3 sticky top-0 z-10 bg-background px-4 pt-3 pb-1">
         <div className="flex items-center justify-between gap-2">
           <span className="eyebrow">{t.thumbnailRail.pages}</span>
           <div className="flex items-center gap-1.5">
@@ -352,7 +352,7 @@ export function ThumbnailRail({
   return (
     <TooltipProvider delay={200}>
       <div className="relative h-full">
-        <ScrollArea className="h-full border-r border-hairline bg-sidebar [&_[data-slot=scroll-area-scrollbar]]:z-20">
+        <ScrollArea className="h-full border-r border-hairline bg-background [&_[data-slot=scroll-area-scrollbar]]:z-20">
           {scrollAreaContents}
         </ScrollArea>
         {currentPosition && (
@@ -428,10 +428,10 @@ function CurrentThumbnailButton({
 
 function thumbButtonClass(active: boolean): string {
   return cn(
-    'group/thumb flex w-full items-start gap-2.5 rounded-[6px] p-1.5 text-left outline-none motion-safe:transition-[background-color,scale] motion-safe:duration-100',
+    'group/thumb flex w-full items-start gap-2.5 rounded-none py-1.5 text-left outline-none motion-safe:transition-[background-color,scale] motion-safe:duration-100',
     'hover:bg-muted/60 active:scale-[0.985]',
     'focus-visible:ring-1 focus-visible:ring-brand focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar',
-    active && 'bg-muted',
+    active && 'text-brand',
   );
 }
 
@@ -550,7 +550,7 @@ function HorizontalVirtualThumbList({
         </span>
         <div
           className={cn(
-            'relative shrink-0 overflow-hidden rounded-[4px] border bg-card motion-safe:transition-[border-color,box-shadow]',
+            'relative shrink-0 overflow-hidden rounded-none border bg-card motion-safe:transition-[border-color,box-shadow]',
             active
               ? 'border-brand shadow-[0_0_0_1px_var(--brand)]'
               : 'border-hairline group-hover/thumb:border-foreground/25',
@@ -814,7 +814,7 @@ function ThumbContents({
 
   return (
     <>
-      <div className="mt-1.5 flex w-7 shrink-0 flex-col items-end gap-1">
+      <div className="mt-1.5 flex w-[18px] shrink-0 flex-col items-start gap-1">
         <span
           className={cn(
             'font-mono text-[10px] font-medium tracking-[0.06em] tabular-nums uppercase',
@@ -837,7 +837,7 @@ function ThumbContents({
       <div
         ref={boxRef}
         className={cn(
-          'relative shrink-0 overflow-hidden rounded-[4px] border bg-card motion-safe:transition-[border-color,box-shadow]',
+          'relative shrink-0 overflow-hidden rounded-none border bg-card motion-safe:transition-[border-color,box-shadow]',
           active
             ? 'border-brand shadow-[0_0_0_1px_var(--brand)]'
             : 'border-hairline group-hover/thumb:border-foreground/25',

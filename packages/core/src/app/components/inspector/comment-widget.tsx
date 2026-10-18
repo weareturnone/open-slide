@@ -5,7 +5,7 @@ import { format, plural, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import { useInspector } from './inspector-provider';
 
-export function CommentWidget() {
+export function CommentWidget({ placement = 'floating' }: { placement?: 'floating' | 'notes' }) {
   const t = useLocale();
   const { comments, remove, error } = useInspector();
   const [open, setOpen] = useState(false);
@@ -35,14 +35,20 @@ export function CommentWidget() {
     <div
       ref={ref}
       data-inspector-ui
-      className="absolute right-4 bottom-4 z-20 flex flex-col items-end gap-2"
+      className={cn(
+        'absolute z-20 flex flex-col items-end gap-2',
+        placement === 'notes'
+          ? 'right-12 top-0 h-12 justify-center'
+          : 'right-4 bottom-14 md:hidden',
+      )}
     >
       {mounted && (
         <div
           ref={panelRef}
           aria-hidden={!animVisible}
           className={cn(
-            'w-80 origin-bottom-right rounded-[8px] border bg-card shadow-overlay',
+            'w-80 max-w-[calc(100vw-32px)] origin-bottom-right rounded-[8px] border bg-card shadow-overlay',
+            placement === 'notes' && 'absolute bottom-full mb-2',
             'motion-safe:transition-[opacity,translate,scale] motion-safe:duration-200 motion-safe:ease-swift',
             animVisible
               ? 'translate-y-0 scale-100 opacity-100'
@@ -108,10 +114,12 @@ export function CommentWidget() {
         ref={fabRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-full border bg-card px-3 py-2 text-xs font-medium shadow-floating transition-[background-color,scale] duration-150 hover:bg-muted active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        className="flex items-center gap-2 rounded-[2px] px-2 py-2 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        aria-label={format(plural(count, t.inspector.commentsCount), { count })}
         aria-expanded={open}
       >
-        <MessageSquare className="size-4" />
+        <MessageSquare className="size-3.5" />
+        {placement === 'notes' && <span>{t.studio.comments}</span>}
         <span className="nums">{count}</span>
       </button>
     </div>

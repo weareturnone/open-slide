@@ -20,7 +20,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -181,8 +181,11 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
   const [sort, setSort] = useSortPreference();
   const [gridColumns, setGridColumns] = useGridColumns();
   const dragDepth = useRef(0);
-  const inputId = useId();
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const t = useLocale();
+  useEffect(() => {
+    if (lockedToGlobal) document.title = `${t.home.assets} · Turn.One Studio`;
+  }, [lockedToGlobal, t.home.assets]);
   const contentScopeLabel = kind === 'document' ? t.asset.scopeDocument : t.asset.scopeSlide;
   const contentAssetPath = `${kind === 'document' ? 'documents' : 'slides'}/${slideId}/assets/`;
 
@@ -323,10 +326,17 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
         }
       }}
     >
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline bg-sidebar px-6 py-3">
+      <div
+        className={cn(
+          'flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-hairline',
+          lockedToGlobal ? 'px-5 py-6 md:px-8 lg:px-14 lg:py-4' : 'px-6 py-3',
+        )}
+      >
         <div className="flex min-w-0 items-center gap-3">
           {lockedToGlobal ? (
-            <span className="eyebrow">{t.asset.eyebrow}</span>
+            <h1 className="font-heading text-[52px] font-medium leading-[0.95] tracking-[-0.05em] lg:text-[76px]">
+              {t.asset.eyebrow}
+            </h1>
           ) : (
             <Tabs value={scope} onValueChange={(next) => setScope(next as Scope)}>
               <TabsList>
@@ -335,13 +345,20 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
               </TabsList>
             </Tabs>
           )}
-          <p className="min-w-0 truncate text-[12px] text-muted-foreground">
-            <span className="font-mono text-[11.5px]">
-              {scope === 'global' ? 'assets/' : contentAssetPath}
-            </span>
+          <p
+            className={cn(
+              'min-w-0 truncate text-muted-foreground',
+              lockedToGlobal ? 'self-end pb-2 font-mono text-[13px] uppercase' : 'text-[12px]',
+            )}
+          >
+            {!lockedToGlobal && (
+              <span className="font-mono text-[11.5px]">
+                {scope === 'global' ? 'assets/' : contentAssetPath}
+              </span>
+            )}
             {!loading && (
               <>
-                <span className="mx-2 opacity-50">·</span>
+                {!lockedToGlobal && <span className="mx-2 opacity-50">·</span>}
                 <span className="folio">
                   {format(assets.length === 1 ? t.asset.fileCount.one : t.asset.fileCount.other, {
                     count: assets.length.toString().padStart(2, '0'),
@@ -356,27 +373,28 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
             type="button"
             onClick={() => setLogoSearchOpen(true)}
             className={cn(
-              'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[5px] border border-border bg-card px-2.5 text-[12.5px] font-medium transition-colors',
+              'inline-flex h-10 cursor-pointer items-center gap-2 rounded-[2px] border border-border bg-card px-3 text-[13px] font-medium transition-colors',
               'hover:bg-muted/60 hover:border-foreground/20 active:translate-y-px',
             )}
           >
             <Search className="size-3.5" />
             <span>{t.asset.searchLogos}</span>
           </button>
-          <label
-            htmlFor={inputId}
+          <button
+            type="button"
+            onClick={() => uploadInputRef.current?.click()}
             className={cn(
-              'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[5px] bg-foreground px-3 text-[12.5px] font-medium text-background transition-colors',
-              'shadow-[inset_0_1px_0_oklch(1_0_0/0.12),0_1px_0_oklch(0_0_0/0.12)]',
-              'hover:bg-foreground/90 active:translate-y-px',
+              'inline-flex h-10 cursor-pointer items-center gap-2 rounded-[2px] bg-brand px-4 text-[13px] font-medium text-brand-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              'hover:bg-brand/90 active:translate-y-px',
             )}
           >
             <Upload className="size-3.5" />
             <span>{t.asset.upload}</span>
-          </label>
+          </button>
           <input
-            id={inputId}
+            ref={uploadInputRef}
             type="file"
+            hidden
             multiple
             className="sr-only"
             onChange={(e) => {
@@ -389,7 +407,12 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-background px-4 py-2.5 sm:px-6">
+      <div
+        className={cn(
+          'flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-background py-4',
+          lockedToGlobal ? 'px-5 md:px-8 lg:px-14' : 'px-4 sm:px-6',
+        )}
+      >
         <div className="relative min-w-[180px] flex-1 md:max-w-[280px]">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -507,9 +530,9 @@ export function AssetView({ slideId, kind = 'slide' }: Props) {
         ) : (
           <div
             className={cn(
-              'p-4 sm:p-6',
+              lockedToGlobal ? 'px-5 py-8 md:px-8 lg:px-14' : 'p-4 sm:p-6',
               viewMode === 'grid'
-                ? 'grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4 lg:grid-cols-[repeat(var(--asset-grid-columns),minmax(0,1fr))]'
+                ? 'grid grid-cols-[repeat(auto-fill,minmax(min(180px,100%),1fr))] gap-x-6 gap-y-8 lg:grid-cols-[repeat(var(--asset-grid-columns),minmax(0,1fr))]'
                 : 'flex flex-col gap-1',
             )}
             style={
@@ -868,6 +891,12 @@ function AssetListHeader({
   );
 }
 
+function assetPreviewBackground(asset: AssetEntry): string {
+  return /(?:^|[\s._-])(?:white|light|inverse|negative)(?:[\s._-]|$)/i.test(asset.name)
+    ? '#26251E'
+    : '#FFFFFF';
+}
+
 function AssetCard({
   asset,
   onPreview,
@@ -882,12 +911,13 @@ function AssetCard({
   const isImage = asset.mime.startsWith('image/');
   const t = useLocale();
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-[6px] border border-border bg-card shadow-edge transition-[box-shadow,scale] duration-150 hover:shadow-floating motion-safe:active:scale-[0.99] focus-within:ring-2 focus-within:ring-ring/30">
+    <div className="group relative flex flex-col focus-within:ring-2 focus-within:ring-ring/30">
       <button
         type="button"
         onClick={onPreview}
         aria-label={format(t.asset.previewAria, { name: asset.name })}
-        className="relative flex aspect-square w-full items-center justify-center overflow-hidden border-b border-hairline bg-[repeating-conic-gradient(theme(colors.muted)_0_25%,transparent_0_50%)] bg-[length:14px_14px]"
+        style={{ backgroundColor: assetPreviewBackground(asset) }}
+        className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-[2px] border border-border bg-white p-6"
       >
         {isImage ? (
           <img
@@ -904,13 +934,15 @@ function AssetCard({
         )}
       </button>
 
-      <div className="flex items-center gap-1 px-2.5 py-2">
+      <div className="flex items-start gap-1 pt-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-medium" title={asset.name}>
+          <div className="truncate font-mono text-[12px]" title={asset.name}>
             {asset.name}
           </div>
           <div className="folio flex items-center gap-1.5">
-            <span className="truncate">{formatSize(asset.size)}</span>
+            <span className="truncate uppercase">
+              {asset.name.split('.').pop()} · {formatSize(asset.size)}
+            </span>
             <UsageBadge unused={asset.unused} />
           </div>
           <div
@@ -944,12 +976,13 @@ function AssetListItem({
   const isImage = asset.mime.startsWith('image/');
   const t = useLocale();
   return (
-    <div className="group flex min-h-14 items-center gap-3 rounded-[6px] border border-border bg-card p-2 shadow-edge transition-[box-shadow,scale] duration-150 hover:shadow-floating motion-safe:active:scale-[0.995] focus-within:ring-2 focus-within:ring-ring/30">
+    <div className="group flex min-h-14 items-center gap-3 border-b border-border p-2 transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring/30">
       <button
         type="button"
         onClick={onPreview}
         aria-label={format(t.asset.previewAria, { name: asset.name })}
-        className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-hairline bg-[repeating-conic-gradient(theme(colors.muted)_0_25%,transparent_0_50%)] bg-[length:10px_10px]"
+        style={{ backgroundColor: assetPreviewBackground(asset) }}
+        className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-hairline bg-white"
       >
         {isImage ? (
           <img
@@ -966,7 +999,7 @@ function AssetListItem({
         )}
       </button>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[12.5px] font-medium" title={asset.name}>
+        <div className="truncate font-mono text-[12px]" title={asset.name}>
           {asset.name}
         </div>
         <div className="folio mt-0.5 flex min-w-0 items-center gap-1.5 lg:hidden">
@@ -1051,10 +1084,8 @@ function UsageBadge({ unused, showUsed = false }: { unused: boolean; showUsed?: 
   return (
     <span
       className={cn(
-        'shrink-0 rounded-sm px-1 py-px text-[10px] font-medium leading-none',
-        unused
-          ? 'bg-muted text-muted-foreground'
-          : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+        'shrink-0 rounded-[2px] border border-border bg-transparent px-1.5 py-1 font-mono text-[9px] uppercase tracking-[0.06em] leading-none',
+        unused ? 'text-muted-foreground' : 'text-emerald-700 dark:text-emerald-400',
       )}
     >
       {unused ? t.asset.usageUnused : t.asset.usageUsed}
@@ -1127,7 +1158,7 @@ function RenameAsset({
   if (viewMode === 'list') {
     return (
       <div className="flex min-h-14 items-center gap-3 rounded-[6px] border border-primary bg-card p-2 shadow-edge ring-2 ring-primary/15">
-        <div className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-hairline bg-[repeating-conic-gradient(theme(colors.muted)_0_25%,transparent_0_50%)] bg-[length:10px_10px]">
+        <div className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-hairline bg-white">
           {isImage ? (
             <img src={asset.url} alt="" className="size-full object-contain" draggable={false} />
           ) : (
@@ -1176,7 +1207,7 @@ function RenameAsset({
 
   return (
     <div className="relative flex flex-col overflow-hidden rounded-[6px] border border-primary bg-card shadow-edge ring-2 ring-primary/15">
-      <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-[repeating-conic-gradient(theme(colors.muted)_0_25%,transparent_0_50%)] bg-[length:16px_16px]">
+      <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-white">
         {isImage ? (
           <img src={asset.url} alt="" className="size-full object-contain" draggable={false} />
         ) : (
@@ -1340,7 +1371,10 @@ function PreviewDialog({
           </DialogDescription>
         </DialogHeader>
         {isImage ? (
-          <div className="flex max-h-[60vh] items-center justify-center overflow-hidden rounded-md border bg-[repeating-conic-gradient(theme(colors.muted)_0_25%,transparent_0_50%)] bg-[length:16px_16px]">
+          <div
+            className="flex max-h-[60vh] items-center justify-center overflow-hidden rounded-[2px] border bg-white"
+            style={{ backgroundColor: assetPreviewBackground(asset) }}
+          >
             <img
               src={asset.url}
               alt={asset.name}
@@ -1571,7 +1605,7 @@ function LogoResultCard({
     <div className="group flex flex-col overflow-hidden rounded-lg border bg-card">
       <div
         className={cn(
-          'relative flex aspect-square w-full items-center justify-center overflow-hidden bg-[repeating-conic-gradient(theme(colors.muted)_0_25%,transparent_0_50%)] bg-[length:16px_16px]',
+          'relative flex aspect-square w-full items-center justify-center overflow-hidden bg-white',
           variant === 'dark' && hasVariants && 'bg-neutral-900',
         )}
       >
